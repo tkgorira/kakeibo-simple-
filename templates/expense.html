@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block content %}
+
+<!-- 入力フォーム -->
+<div class="section-title">支出を追加</div>
+<div class="card">
+  <form method="POST" action="/expense">
+    <input type="hidden" name="action" value="add">
+
+    <div class="row2">
+      <div class="form-group">
+        <label>日付</label>
+        <input type="date" name="expense_date" value="{{ today }}" required>
+      </div>
+      <div class="form-group">
+        <label>金額</label>
+        <input type="number" name="amount" placeholder="0" min="1" required inputmode="numeric">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>カテゴリ</label>
+      <select name="category">
+        {% for c in categories %}
+        <option value="{{ c }}">{{ c }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label>メモ（任意）</label>
+      <input type="text" name="note" placeholder="例: スーパー">
+    </div>
+
+    <div class="form-group">
+      <label>支払い方法</label>
+      <div class="payment-tabs">
+        <input type="radio" name="payment_type" id="pt_cash" value="cash" checked onchange="toggleCard()">
+        <label for="pt_cash">現金</label>
+        <input type="radio" name="payment_type" id="pt_card" value="card" onchange="toggleCard()">
+        <label for="pt_card">クレカ</label>
+      </div>
+    </div>
+
+    <div id="card-selector" class="form-group">
+      <label>カードを選択</label>
+      {% if cards %}
+      <select name="card_id">
+        {% for card in cards %}
+        <option value="{{ card.id }}">{{ card.name }}（締め日: {{ card.closing_day }}日）</option>
+        {% endfor %}
+      </select>
+      {% else %}
+      <p style="font-size:0.8rem;color:#e74c3c;">⚠ カードが登録されていません。設定から追加してください。</p>
+      {% endif %}
+    </div>
+
+    <button type="submit" class="btn btn-success btn-block">追加する</button>
+  </form>
+</div>
+
+<!-- 直近の支出一覧 -->
+<div class="section-title">最近の支出（直近60件）</div>
+
+{% if expenses %}
+  {% for e in expenses %}
+  <div class="exp-item">
+    <div class="left">
+      <div class="cat">{{ e.category or 'その他' }}</div>
+      <div class="note">{{ e.note or '（メモなし）' }}</div>
+      <div class="meta">
+        {{ e.expense_date }}
+        {% if e.payment_type == 'card' %} · {{ e.card_name or 'カード' }}{% endif %}
+        · 引き落とし: {{ e.billing_ym | fmt_ym }}
+      </div>
+    </div>
+    <div class="right">
+      <div class="amt">-{{ e.amount | fmt_money }}</div>
+      <form method="POST" action="/expense" style="margin-top:5px;">
+        <input type="hidden" name="action" value="delete">
+        <input type="hidden" name="id" value="{{ e.id }}">
+        <button type="submit" class="btn btn-danger"
+          onclick="return confirm('削除しますか？')">削除</button>
+      </form>
+    </div>
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="empty">まだ支出がありません</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleCard() {
+  const isCard = document.getElementById('pt_card').checked;
+  const sel = document.getElementById('card-selector');
+  sel.classList.toggle('show', isCard);
+}
+</script>
+{% endblock %}

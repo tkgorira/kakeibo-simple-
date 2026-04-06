@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block content %}
+
+<!-- 月ナビ -->
+<div class="month-nav">
+  <a href="/?ym={{ prev_ym }}">‹</a>
+  <span class="month-label">{{ ym | fmt_ym }}</span>
+  <a href="/?ym={{ next_ym }}">›</a>
+</div>
+
+<!-- 残高カード -->
+<div class="balance-card" style="margin-top:12px;">
+  <div class="label">今月の残高</div>
+  <div class="amount {% if balance >= 0 %}positive{% else %}negative{% endif %}">
+    {{ balance | fmt_money }}
+  </div>
+  <div class="sub">給料 - 固定費 - 変動費</div>
+</div>
+
+<!-- 内訳 -->
+<div class="breakdown">
+  <div class="bd-item">
+    <div class="lbl">給料</div>
+    <div class="val income">{{ salary | fmt_money }}</div>
+  </div>
+  <div class="bd-item">
+    <div class="lbl">固定費</div>
+    <div class="val expense">-{{ fixed_total | fmt_money }}</div>
+  </div>
+  <div class="bd-item">
+    <div class="lbl">変動費</div>
+    <div class="val expense">-{{ variable_total | fmt_money }}</div>
+  </div>
+</div>
+
+<!-- 固定費明細 -->
+{% if fixed %}
+<div class="section-title">固定費明細</div>
+<div class="card">
+  {% for f in fixed %}
+  <div class="fixed-row">
+    <span>{{ f.name }}</span>
+    <span class="amt">-{{ f.amount | fmt_money }}</span>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<!-- 変動費 -->
+<div class="section-title">変動費（引き落とし: {{ ym | fmt_ym }}）</div>
+
+{% if expenses %}
+<div class="card" style="margin-bottom:8px;">
+  <div class="fixed-row">
+    <span>💴 現金払い</span>
+    <span class="amt">-{{ cash_total | fmt_money }}</span>
+  </div>
+  <div class="fixed-row">
+    <span>💳 クレジットカード</span>
+    <span class="amt">-{{ card_total | fmt_money }}</span>
+  </div>
+  <div class="fixed-row" style="font-weight:700;">
+    <span>合計</span>
+    <span class="amt">-{{ variable_total | fmt_money }}</span>
+  </div>
+</div>
+{% endif %}
+
+{% if expenses %}
+  {% for e in expenses %}
+  <div class="exp-item">
+    <div class="left">
+      <div class="cat">{{ e.category or 'その他' }}</div>
+      <div class="note">{{ e.note or '（メモなし）' }}</div>
+      <div class="meta">
+        使用: {{ e.expense_date }}
+        {% if e.payment_type == 'card' %} · {{ e.card_name or 'カード' }}{% endif %}
+      </div>
+    </div>
+    <div class="right">
+      <div class="amt">-{{ e.amount | fmt_money }}</div>
+      <div class="pay">{% if e.payment_type == 'cash' %}現金{% else %}カード{% endif %}</div>
+    </div>
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="empty">この月の変動費はまだありません</div>
+{% endif %}
+
+<!-- 支出入力ボタン -->
+<div style="margin: 16px 12px;">
+  <a href="/expense" class="btn btn-primary btn-block">＋ 支出を入力する</a>
+</div>
+
+{% endblock %}

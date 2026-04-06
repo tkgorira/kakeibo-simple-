@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>家計簿</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header>
+  <h1>家計簿</h1>
+</header>
+
+{% with messages = get_flashed_messages() %}
+  {% for msg in messages %}
+    <div class="flash">{{ msg }}</div>
+  {% endfor %}
+{% endwith %}
+
+{% block content %}{% endblock %}
+
+<nav class="bottom">
+  <a href="/" class="{% if request.path == '/' %}active{% endif %}">
+    <span class="icon">🏠</span>当月
+  </a>
+  <a href="/expense" class="{% if request.path == '/expense' %}active{% endif %}">
+    <span class="icon">➕</span>支出入力
+  </a>
+  <a href="/settings" class="{% if request.path == '/settings' %}active{% endif %}">
+    <span class="icon">⚙️</span>設定
+  </a>
+</nav>
+
+{% block scripts %}{% endblock %}
+</body>
+</html>

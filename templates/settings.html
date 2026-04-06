@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+{% block content %}
+
+<!-- 給料 -->
+<div class="section-title">給料</div>
+<div class="card">
+  <form method="POST" action="/settings">
+    <input type="hidden" name="action" value="salary">
+    <div class="form-group">
+      <label>手取り月収（円）</label>
+      <input type="number" name="amount" value="{{ salary }}" min="0" inputmode="numeric">
+    </div>
+    <button type="submit" class="btn btn-primary btn-block">更新</button>
+  </form>
+</div>
+
+<!-- 固定費 -->
+<div class="section-title">固定費</div>
+
+{% if fixed %}
+  {% for f in fixed %}
+  {% set pend = pending.get(f.item_id) %}
+  <div class="card" style="margin-bottom:8px;">
+
+    <!-- 項目ヘッダー -->
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">
+      <div>
+        <span class="type-badge {{ 'fixed' if f.type == '固定' else 'variable' }}">{{ f.type }}</span>
+        <span style="font-weight:700;margin-left:6px;">{{ f.name }}</span>
+        <br>
+        <span style="font-size:0.95rem;font-weight:700;color:#e74c3c;">{{ f.amount | fmt_money }}</span>
+        {% if pend %}
+        <div class="pending-badge">
+          来月から変更予定:
+          {% if pend.type != f.type %}<b>{{ pend.type }}</b> {% endif %}
+          {{ pend.name }}
+          {% if pend.amount != f.amount %}<b>{{ pend.amount | fmt_money }}</b>{% endif %}
+        </div>
+        {% endif %}
+      </div>
+      <!-- 削除 -->
+      <form method="POST" action="/settings">
+        <input type="hidden" name="action" value="delete_fixed">
+        <input type="hidden" name="item_id" value="{{ f.item_id }}">
+        <button type="submit" class="btn btn-danger"
+          onclick="return confirm('削除しますか？（全履歴削除）')">削除</button>
+      </form>
+    </div>
+
+    <!-- 固定/変動 切り替え -->
+    <div style="display:flex;gap:6px;margin-bottom:10px;">
+      <form method="POST" action="/settings" style="flex:1">
+        <input type="hidden" name="action" value="set_type">
+        <input type="hidden" name="item_id" value="{{ f.item_id }}">
+        <input type="hidden" name="type" value="固定">
+        <button type="submit"
+          class="btn btn-block {% if (pend and pend.type == '固定') or (not pend and f.type == '固定') %}btn-primary{% else %}btn-outline{% endif %}"
+          style="font-size:0.85rem;padding:8px;">固定</button>
+      </form>
+      <form method="POST" action="/settings" style="flex:1">
+        <input type="hidden" name="action" value="set_type">
+        <input type="hidden" name="item_id" value="{{ f.item_id }}">
+        <input type="hidden" name="type" value="変動">
+        <button type="submit"
+          class="btn btn-block {% if (pend and pend.type == '変動') or (not pend and f.type == '変動') %}btn-warning{% else %}btn-outline{% endif %}"
+          style="font-size:0.85rem;padding:8px;">変動</button>
+      </form>
+    </div>
+
+    <!-- 名前・金額編集（翌月から） -->
+    <details>
+      <summary class="edit-summary">名前・金額を変更（翌月から）</summary>
+      <form method="POST" action="/settings" style="margin-top:10px;">
+        <input type="hidden" name="action" value="edit_fixed">
+        <input type="hidden" name="item_id" value="{{ f.item_id }}">
+        <div class="row2">
+          <div class="form-group">
+            <label>名前</label>
+            <input type="text" name="name" value="{{ pend.name if pend else f.name }}">
+          </div>
+          <div class="form-group">
+            <label>金額（円）</label>
+            <input type="number" name="amount" value="{{ pend.amount if pend else f.amount }}" inputmode="numeric">
+          </div>
+        </div>
+        <button type="submit" class="btn btn-success btn-block" style="font-size:0.85rem;">
+          翌月({{ next_ym | fmt_ym }})から変更
+        </button>
+      </form>
+    </details>
+
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="empty">固定費がまだ登録されていません</div>
+{% endif %}
+
+<!-- 固定費追加 -->
+<div class="section-title">固定費を追加</div>
+<div class="card">
+  <form method="POST" action="/settings">
+    <input type="hidden" name="action" value="add_fixed">
+    <div class="row2">
+      <div class="form-group">
+        <label>名前</label>
+        <input type="text" name="name" placeholder="例: 家賃">
+      </div>
+      <div class="form-group">
+        <label>金額（円）</label>
+        <input type="number" name="amount" placeholder="0" min="1" inputmode="numeric">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>タイプ</label>
+      <div class="payment-tabs">
+        <input type="radio" name="type" id="type_fixed" value="固定" checked>
+        <label for="type_fixed">固定</label>
+        <input type="radio" name="type" id="type_var" value="変動">
+        <label for="type_var">変動</label>
+      </div>
+    </div>
+    <button type="submit" class="btn btn-success btn-block">今月から追加</button>
+  </form>
+</div>
+
+<!-- クレジットカード -->
+<div class="section-title">クレジットカード</div>
+<div class="card">
+  {% if cards %}
+    {% for c in cards %}
+    <div class="list-item">
+      <div class="name">
+        {{ c.name }}
+        {% if c.fixed_months %}
+        <small>使用日から <b>{{ c.fixed_months }}か月後</b> に引き落とし</small>
+        {% else %}
+        <small>締め日: {{ c.closing_day }}日（以内→翌月 / 超過→翌々月引き落とし）</small>
+        {% endif %}
+      </div>
+      <div class="right-group">
+        <form method="POST" action="/settings" style="display:inline;">
+          <input type="hidden" name="action" value="delete_card">
+          <input type="hidden" name="id" value="{{ c.id }}">
+          <button type="submit" class="btn btn-danger"
+            onclick="return confirm('削除しますか？')">削除</button>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+  {% else %}
+    <div class="empty">カードがまだ登録されていません</div>
+  {% endif %}
+</div>
+
+<!-- カード追加 -->
+<div class="card">
+  <form method="POST" action="/settings">
+    <input type="hidden" name="action" value="add_card">
+    <p style="font-size:0.8rem;font-weight:700;color:#555;margin-bottom:10px;">カードを追加</p>
+    <div class="form-group">
+      <label>カード名</label>
+      <input type="text" name="name" placeholder="例: 楽天カード">
+    </div>
+    <div class="form-group">
+      <label>引き落としタイプ</label>
+      <div class="payment-tabs">
+        <input type="radio" name="billing_type" id="bt_closing" value="closing" checked onchange="toggleBillingType()">
+        <label for="bt_closing">締め日で計算</label>
+        <input type="radio" name="billing_type" id="bt_fixed" value="fixed" onchange="toggleBillingType()">
+        <label for="bt_fixed">固定月数（ETC等）</label>
+      </div>
+    </div>
+    <div id="closing-fields">
+      <div class="form-group">
+        <label>締め日（日）</label>
+        <input type="number" name="closing_day" value="25" min="1" max="31" inputmode="numeric">
+      </div>
+    </div>
+    <div id="fixed-fields" style="display:none;">
+      <div class="form-group">
+        <label>引き落としまでの月数</label>
+        <input type="number" name="fixed_months" value="3" min="1" max="12" inputmode="numeric">
+        <small style="color:#888;font-size:0.75rem;">例: ETC = 3（使用月の3か月後）</small>
+      </div>
+    </div>
+    <button type="submit" class="btn btn-success btn-block">追加</button>
+  </form>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleBillingType() {
+  const isFixed = document.getElementById('bt_fixed').checked;
+  document.getElementById('closing-fields').style.display = isFixed ? 'none' : 'block';
+  document.getElementById('fixed-fields').style.display   = isFixed ? 'block' : 'none';
+}
+</script>
+{% endblock %}
