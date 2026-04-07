@@ -68,6 +68,7 @@
         <span style="font-weight:700;margin-left:6px;">{{ f.name }}</span>
         <br>
         <span style="font-size:0.95rem;font-weight:700;color:#e74c3c;">{{ f.amount | fmt_money }}</span>
+        {% if f.card_name %}<span style="font-size:0.8rem;color:#3498db;margin-left:4px;">💳 {{ f.card_name }}</span>{% endif %}
         {% if pend %}
         <div class="pending-badge">
           来月から変更予定:
@@ -131,6 +132,17 @@
             {% endfor %}
           </select>
         </div>
+        {% if cards %}
+        <div class="form-group">
+          <label>支払いカード（任意）</label>
+          <select name="card_id">
+            <option value="">なし</option>
+            {% for card in cards %}
+            <option value="{{ card.id }}" {% if (pend and pend.card_id == card.id) or (not pend and f.card_id == card.id) %}selected{% endif %}>{{ card.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        {% endif %}
         <button type="submit" class="btn btn-success btn-block" style="font-size:0.85rem;">変更を登録</button>
       </form>
     </details>
@@ -174,6 +186,17 @@
         {% endfor %}
       </select>
     </div>
+    {% if cards %}
+    <div class="form-group">
+      <label>支払いカード（サブスク等、任意）</label>
+      <select name="card_id">
+        <option value="">なし</option>
+        {% for card in cards %}
+        <option value="{{ card.id }}">{{ card.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% endif %}
     <div class="form-group" style="display:flex;align-items:center;gap:8px;">
       <input type="checkbox" name="one_time" id="one_time" value="1">
       <label for="one_time" style="margin:0;font-weight:normal;">この月のみ（翌月以降は自動で無効）</label>

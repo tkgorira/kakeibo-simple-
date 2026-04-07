@@ -66,7 +66,7 @@
 <div class="card">
   {% for f in fixed %}
   <div class="fixed-row">
-    <span>{{ f.name }}</span>
+    <span>{{ f.name }}{% if f.card_name %} <small style="color:#3498db;">💳 {{ f.card_name }}</small>{% endif %}</span>
     <span class="amt">-{{ f.amount | fmt_money }}</span>
   </div>
   {% endfor %}
