@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="家計簿">
+  <title>ユーザー登録 - 家計簿</title>
+  <link rel="icon" type="image/png" href="/static/icon.png">
+  <link rel="apple-touch-icon" href="/static/icon.png">
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    .login-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 24px 16px;
+    }
+    .login-logo {
+      width: 72px;
+      height: 72px;
+      border-radius: 16px;
+      margin-bottom: 12px;
+      object-fit: cover;
+    }
+    .login-title {
+      font-size: 1.3rem;
+      font-weight: 700;
+      color: #1a2a3a;
+      margin-bottom: 6px;
+    }
+    .login-sub {
+      font-size: 0.85rem;
+      color: #888;
+      margin-bottom: 24px;
+    }
+    .login-card {
+      width: 100%;
+      max-width: 360px;
+      background: white;
+      border-radius: 14px;
+      padding: 24px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    }
+  </style>
+</head>
+<body style="padding-bottom:0;">
+<div class="login-wrap">
+  <img src="/static/icon.png" class="login-logo" alt="家計簿">
+  <div class="login-title">ユーザー登録</div>
+  <div class="login-sub">初回のみ — アカウントを作成してください</div>
+
+  {% with messages = get_flashed_messages() %}
+    {% for msg in messages %}
+      <div class="flash" style="width:100%;max-width:360px;margin-bottom:12px;">{{ msg }}</div>
+    {% endfor %}
+  {% endwith %}
+
+  <div class="login-card">
+    <form method="POST">
+      <div class="form-group">
+        <label>ユーザー名</label>
+        <input type="text" name="username" autocomplete="username"
+               autofocus placeholder="ユーザー名">
+      </div>
+      <div class="form-group">
+        <label>パスワード（6文字以上）</label>
+        <input type="password" name="password" autocomplete="new-password"
+               placeholder="パスワード">
+      </div>
+      <div class="form-group">
+        <label>パスワード（確認）</label>
+        <input type="password" name="confirm" autocomplete="new-password"
+               placeholder="パスワードをもう一度">
+      </div>
+      <button type="submit" class="btn btn-success btn-block" style="margin-top:8px;">登録する</button>
+    </form>
+  </div>
+</div>
+</body>
+</html>

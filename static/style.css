@@ -15,6 +15,8 @@ header {
   background: #1a2a3a;
   color: white;
   padding: 13px 16px;
+  /* iOS PWA: ステータスバー分の余白 */
+  padding-top: max(13px, env(safe-area-inset-top));
   position: sticky;
   top: 0;
   z-index: 100;
