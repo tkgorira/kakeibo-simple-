@@ -128,6 +128,25 @@ def calc_billing_ym(expense_date_str, payment_type, card_id=None):
     return billing.strftime('%Y-%m')
 
 
+def get_card_period_start(today, closing_day):
+    """カードの締め日から現在の請求期間開始日を計算する"""
+    if today.day <= closing_day:
+        # 今月の締め日未到達 → 前月の (closing_day+1) 日から
+        prev = add_months(today, -1)
+        start_day = closing_day + 1
+        last_day_prev = monthrange(prev.year, prev.month)[1]
+        if start_day > last_day_prev:
+            return date(today.year, today.month, 1)
+        return date(prev.year, prev.month, start_day)
+    else:
+        # 今月の締め日を超過 → 今月の (closing_day+1) 日から
+        start_day = closing_day + 1
+        last_day = monthrange(today.year, today.month)[1]
+        if start_day > last_day:
+            return add_months(date(today.year, today.month, 1), 1)
+        return date(today.year, today.month, start_day)
+
+
 def fmt_ym(ym):
     year, month = ym.split('-')
     return f'{year}年{int(month)}月'
@@ -224,16 +243,32 @@ def index():
         etc_total = sum(e['amount'] for e in expenses
                         if e['payment_type'] == 'card' and e['card_fixed_months'])
 
-        # アラート用: 当月に使用したカード支出（expense_date基準）
-        used_rows = conn.execute(
-            '''SELECT e.amount, c.fixed_months as card_fixed_months
+        # アラート用: 各カードの締め日に基づいた当期使用額
+        today_date = date.today()
+        cards_all = conn.execute('SELECT * FROM credit_cards').fetchall()
+        card_period_starts = {
+            card['id']: get_card_period_start(today_date, card['closing_day'])
+            for card in cards_all if not card['fixed_months']
+        }
+        alert_rows = conn.execute(
+            '''SELECT e.amount, e.card_id, e.expense_date, c.fixed_months as card_fixed_months
                FROM variable_expenses e
                LEFT JOIN credit_cards c ON e.card_id = c.id
                WHERE e.payment_type = 'card'
-                 AND strftime('%Y-%m', e.expense_date) = ?''',
-            (ym,)
+                 AND (c.fixed_months IS NULL OR c.fixed_months = 0)'''
         ).fetchall()
-        card_used_this_month = sum(r['amount'] for r in used_rows)
+        card_used_this_month = 0
+        today_ym_str = today_date.strftime('%Y-%m')
+        for r in alert_rows:
+            cid = r['card_id']
+            exp_date = date.fromisoformat(r['expense_date'])
+            if cid in card_period_starts:
+                if exp_date >= card_period_starts[cid]:
+                    card_used_this_month += r['amount']
+            else:
+                # カード未選択の場合は今月のexpense_dateで判定
+                if exp_date.strftime('%Y-%m') == today_ym_str:
+                    card_used_this_month += r['amount']
 
         extra_incomes = conn.execute(
             'SELECT * FROM extra_income WHERE ym=? ORDER BY income_date DESC', (ym,)
