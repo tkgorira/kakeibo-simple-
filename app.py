@@ -460,10 +460,15 @@ def settings():
         elif action == 'credit_limit':
             limit = int(request.form.get('credit_limit', 0) or 0)
             with get_db() as conn:
-                conn.execute('UPDATE users SET credit_limit=? WHERE id=?', (limit, uid))
-                if conn.execute('SELECT changes()').fetchone()[0] == 0:
+                if IS_PG:
                     conn.execute(
-                        'INSERT INTO users (id, username, password_hash, credit_limit) VALUES (?,?,?,?)',
+                        '''INSERT INTO users (id, username, password_hash, credit_limit) VALUES (%s,%s,%s,%s)
+                           ON CONFLICT (id) DO UPDATE SET credit_limit=EXCLUDED.credit_limit''',
+                        (uid, 'default', '', limit)
+                    )
+                else:
+                    conn.execute(
+                        'INSERT OR REPLACE INTO users (id, username, password_hash, credit_limit) VALUES (?,?,?,?)',
                         (uid, 'default', '', limit)
                     )
             flash('クレカ上限額を更新しました')
