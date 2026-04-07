@@ -6,9 +6,48 @@
 <div class="card">
   <form method="POST" action="/settings">
     <input type="hidden" name="action" value="salary">
+    <input type="hidden" name="ym" id="salary_ym">
     <div class="form-group">
-      <label>手取り月収（円）</label>
-      <input type="number" name="amount" value="{{ salary }}" min="0" inputmode="numeric">
+      <label>対象月</label>
+      <div style="display:flex;gap:6px;align-items:center;">
+        <select id="sal_year" style="flex:1.4;">
+          {% for y in range(2023, 2030) %}
+          <option value="{{ y }}" {% if y == today_ym[:4]|int %}selected{% endif %}>{{ y }}年</option>
+          {% endfor %}
+        </select>
+        <select id="sal_month" style="flex:1;">
+          {% for m in range(1, 13) %}
+          <option value="{{ '%02d' % m }}" {% if '%02d' % m == today_ym[5:] %}selected{% endif %}>{{ m }}月</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>手取り額（円）</label>
+      <input type="number" name="amount" placeholder="0" min="0" inputmode="numeric">
+    </div>
+    <button type="submit" class="btn btn-primary btn-block">登録・更新</button>
+  </form>
+  {% if monthly_salaries %}
+  <div style="margin-top:12px;">
+    {% for s in monthly_salaries %}
+    <div class="fixed-row">
+      <span>{{ s.ym | fmt_ym }}</span>
+      <span class="amt" style="color:#27ae60;">{{ s.amount | fmt_money }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+
+<!-- クレカ上限アラート -->
+<div class="section-title">クレカ使いすぎアラート</div>
+<div class="card">
+  <form method="POST" action="/settings">
+    <input type="hidden" name="action" value="credit_limit">
+    <div class="form-group">
+      <label>月間クレカ上限額（円）　※0で無効</label>
+      <input type="number" name="credit_limit" value="{{ credit_limit }}" min="0" inputmode="numeric">
     </div>
     <button type="submit" class="btn btn-primary btn-block">更新</button>
   </form>
@@ -196,5 +235,16 @@ function toggleBillingType() {
   document.getElementById('closing-fields').style.display = isFixed ? 'none' : 'block';
   document.getElementById('fixed-fields').style.display   = isFixed ? 'block' : 'none';
 }
+
+(function() {
+  function syncYm() {
+    const y = document.getElementById('sal_year').value;
+    const m = document.getElementById('sal_month').value;
+    document.getElementById('salary_ym').value = y + '-' + m;
+  }
+  document.getElementById('sal_year').addEventListener('change', syncYm);
+  document.getElementById('sal_month').addEventListener('change', syncYm);
+  syncYm();
+})();
 </script>
 {% endblock %}

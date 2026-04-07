@@ -8,13 +8,24 @@
   <a href="/?ym={{ next_ym }}">›</a>
 </div>
 
+<!-- クレカ使いすぎアラート -->
+{% if credit_limit > 0 and card_used_this_month >= credit_limit %}
+<div class="alert-over">
+  ⚠️ クレカ使いすぎ！　{{ card_used_this_month | fmt_money }} / 上限 {{ credit_limit | fmt_money }}
+</div>
+{% elif credit_limit > 0 and card_used_this_month >= credit_limit * 0.8 %}
+<div class="alert-warn">
+  💳 クレカ上限の80%に達しました　{{ card_used_this_month | fmt_money }} / {{ credit_limit | fmt_money }}
+</div>
+{% endif %}
+
 <!-- 残高カード -->
 <div class="balance-card" style="margin-top:12px;">
   <div class="label">今月の残高</div>
   <div class="amount {% if balance >= 0 %}positive{% else %}negative{% endif %}">
     {{ balance | fmt_money }}
   </div>
-  <div class="sub">給料 - 固定費 - 変動費</div>
+  <div class="sub">給料 + 臨時収入 - 固定費 - 変動費</div>
 </div>
 
 <!-- 内訳 -->
@@ -23,6 +34,12 @@
     <div class="lbl">給料</div>
     <div class="val income">{{ salary | fmt_money }}</div>
   </div>
+  {% if extra_total > 0 %}
+  <div class="bd-item">
+    <div class="lbl">臨時収入</div>
+    <div class="val income">+{{ extra_total | fmt_money }}</div>
+  </div>
+  {% endif %}
   <div class="bd-item">
     <div class="lbl">固定費</div>
     <div class="val expense">-{{ fixed_total | fmt_money }}</div>
@@ -55,10 +72,18 @@
     <span>💴 現金払い</span>
     <span class="amt">-{{ cash_total | fmt_money }}</span>
   </div>
+  {% if credit_total > 0 %}
   <div class="fixed-row">
     <span>💳 クレジットカード</span>
-    <span class="amt">-{{ card_total | fmt_money }}</span>
+    <span class="amt">-{{ credit_total | fmt_money }}</span>
   </div>
+  {% endif %}
+  {% if etc_total > 0 %}
+  <div class="fixed-row">
+    <span>🛣 ETCカード</span>
+    <span class="amt">-{{ etc_total | fmt_money }}</span>
+  </div>
+  {% endif %}
   <div class="fixed-row" style="font-weight:700;">
     <span>合計</span>
     <span class="amt">-{{ variable_total | fmt_money }}</span>
@@ -87,9 +112,10 @@
   <div class="empty">この月の変動費はまだありません</div>
 {% endif %}
 
-<!-- 支出入力ボタン -->
-<div style="margin: 16px 12px;">
-  <a href="/expense" class="btn btn-primary btn-block">＋ 支出を入力する</a>
+<!-- ボタン -->
+<div style="margin: 16px 12px; display:flex; gap:8px;">
+  <a href="/expense" class="btn btn-primary btn-block">＋ 支出を入力</a>
+  <a href="/income" class="btn btn-success btn-block">＋ 臨時収入</a>
 </div>
 
 {% endblock %}

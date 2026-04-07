@@ -1,11 +1,9 @@
 {% extends "base.html" %}
 {% block content %}
 
-<!-- 入力フォーム -->
-<div class="section-title">支出を追加</div>
+<div class="section-title">支出を編集</div>
 <div class="card">
-  <form method="POST" action="/expense">
-    <input type="hidden" name="action" value="add">
+  <form method="POST" action="/expense/{{ e.id }}/edit">
 
     <input type="hidden" name="expense_date" id="expense_date">
     <div class="form-group">
@@ -18,29 +16,31 @@
     </div>
     <div class="form-group">
       <label>金額</label>
-      <input type="number" name="amount" placeholder="0" min="1" required inputmode="numeric">
+      <input type="number" name="amount" value="{{ e.amount }}" min="1" required inputmode="numeric">
     </div>
 
     <div class="form-group">
       <label>カテゴリ</label>
       <select name="category">
         {% for c in categories %}
-        <option value="{{ c }}">{{ c }}</option>
+        <option value="{{ c }}" {% if c == e.category %}selected{% endif %}>{{ c }}</option>
         {% endfor %}
       </select>
     </div>
 
     <div class="form-group">
       <label>メモ（任意）</label>
-      <input type="text" name="note" placeholder="例: スーパー">
+      <input type="text" name="note" value="{{ e.note or '' }}" placeholder="例: スーパー">
     </div>
 
     <div class="form-group">
       <label>支払い方法</label>
       <div class="payment-tabs">
-        <input type="radio" name="payment_type" id="pt_cash" value="cash" checked onchange="toggleCard()">
+        <input type="radio" name="payment_type" id="pt_cash" value="cash"
+          {% if e.payment_type == 'cash' %}checked{% endif %} onchange="toggleCard()">
         <label for="pt_cash">現金</label>
-        <input type="radio" name="payment_type" id="pt_card" value="card" onchange="toggleCard()">
+        <input type="radio" name="payment_type" id="pt_card" value="card"
+          {% if e.payment_type == 'card' %}checked{% endif %} onchange="toggleCard()">
         <label for="pt_card">クレカ</label>
       </div>
     </div>
@@ -50,7 +50,9 @@
       {% if cards %}
       <select name="card_id">
         {% for card in cards %}
-        <option value="{{ card.id }}">{{ card.name }}（締め日: {{ card.closing_day }}日）</option>
+        <option value="{{ card.id }}" {% if card.id == e.card_id %}selected{% endif %}>
+          {{ card.name }}（締め日: {{ card.closing_day }}日）
+        </option>
         {% endfor %}
       </select>
       {% else %}
@@ -58,42 +60,12 @@
       {% endif %}
     </div>
 
-    <button type="submit" class="btn btn-success btn-block">追加する</button>
+    <div style="display:flex; gap:8px; margin-top:8px;">
+      <a href="/expense" class="btn btn-block" style="background:#95a5a6;color:#fff;text-align:center;text-decoration:none;padding:12px 0;">キャンセル</a>
+      <button type="submit" class="btn btn-success btn-block">更新する</button>
+    </div>
   </form>
 </div>
-
-<!-- 直近の支出一覧 -->
-<div class="section-title">最近の支出（直近60件）</div>
-
-{% if expenses %}
-  {% for e in expenses %}
-  <div class="exp-item">
-    <div class="left">
-      <div class="cat">{{ e.category or 'その他' }}</div>
-      <div class="note">{{ e.note or '（メモなし）' }}</div>
-      <div class="meta">
-        {{ e.expense_date }}
-        {% if e.payment_type == 'card' %} · {{ e.card_name or 'カード' }}{% endif %}
-        · 引き落とし: {{ e.billing_ym | fmt_ym }}
-      </div>
-    </div>
-    <div class="right">
-      <div class="amt">-{{ e.amount | fmt_money }}</div>
-      <div style="display:flex; gap:4px; margin-top:5px;">
-        <a href="/expense/{{ e.id }}/edit" class="btn" style="background:#3498db;color:#fff;font-size:0.75rem;padding:6px 11px;border-radius:7px;">編集</a>
-        <form method="POST" action="/expense">
-          <input type="hidden" name="action" value="delete">
-          <input type="hidden" name="id" value="{{ e.id }}">
-          <button type="submit" class="btn btn-danger"
-            onclick="return confirm('削除しますか？')">削除</button>
-        </form>
-      </div>
-    </div>
-  </div>
-  {% endfor %}
-{% else %}
-  <div class="empty">まだ支出がありません</div>
-{% endif %}
 
 {% endblock %}
 
@@ -104,19 +76,20 @@ function toggleCard() {
   const sel = document.getElementById('card-selector');
   sel.classList.toggle('show', isCard);
 }
+toggleCard();
 
 (function() {
   const disp   = document.getElementById('d_display');
   const picker = document.getElementById('d_picker');
   const hidden = document.getElementById('expense_date');
-  const today  = '{{ today }}';
+  const init   = '{{ e.expense_date }}';
 
   function setDate(iso) {
     hidden.value = iso;
     picker.value = iso;
     disp.value   = iso.replace(/-/g, '/');
   }
-  setDate(today);
+  setDate(init);
 
   picker.addEventListener('change', function() {
     if (picker.value) setDate(picker.value);

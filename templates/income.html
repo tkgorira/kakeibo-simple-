@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block content %}
+
+<!-- 入力フォーム -->
+<div class="section-title">臨時収入を追加</div>
+<div class="card">
+  <form method="POST" action="/income">
+    <input type="hidden" name="action" value="add">
+
+    <div class="row2">
+      <div class="form-group">
+        <label>日付</label>
+        <input type="date" name="income_date" value="{{ today }}" required>
+      </div>
+      <div class="form-group">
+        <label>金額</label>
+        <input type="number" name="amount" placeholder="0" min="1" required inputmode="numeric">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>メモ（任意）</label>
+      <input type="text" name="note" placeholder="例: フリマ売上、ボーナス">
+    </div>
+
+    <button type="submit" class="btn btn-success btn-block">追加する</button>
+  </form>
+</div>
+
+<!-- 履歴 -->
+<div class="section-title">臨時収入の履歴（直近60件）</div>
+
+{% if incomes %}
+  {% for i in incomes %}
+  <div class="exp-item">
+    <div class="left">
+      <div class="cat">臨時収入</div>
+      <div class="note">{{ i.note or '（メモなし）' }}</div>
+      <div class="meta">{{ i.income_date }} · {{ i.ym | fmt_ym }}</div>
+    </div>
+    <div class="right">
+      <div class="amt income">+{{ i.amount | fmt_money }}</div>
+      <form method="POST" action="/income" style="margin-top:5px;">
+        <input type="hidden" name="action" value="delete">
+        <input type="hidden" name="id" value="{{ i.id }}">
+        <button type="submit" class="btn btn-danger"
+          onclick="return confirm('削除しますか？')">削除</button>
+      </form>
+    </div>
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="empty">まだ臨時収入がありません</div>
+{% endif %}
+
+{% endblock %}

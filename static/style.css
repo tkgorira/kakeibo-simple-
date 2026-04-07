@@ -52,6 +52,25 @@ nav.bottom a {
 nav.bottom a.active { color: #2980b9; }
 nav.bottom a .icon { font-size: 1.4rem; line-height: 1; }
 
+/* ── Alerts ── */
+.alert-over, .alert-warn {
+  margin: 10px 12px 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+.alert-over {
+  background: #fde8e8;
+  border-left: 4px solid #e74c3c;
+  color: #c0392b;
+}
+.alert-warn {
+  background: #fef6e4;
+  border-left: 4px solid #e67e22;
+  color: #b7770d;
+}
+
 /* ── Flash messages ── */
 .flash {
   margin: 10px 12px 0;
