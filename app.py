@@ -220,6 +220,13 @@ def init_db():
         if not conn.execute('SELECT 1 FROM salary').fetchone():
             conn.execute('INSERT INTO salary (amount) VALUES (0)')
 
+        # シングルユーザー行を確保（ログインなし運用でも credit_limit 等が保存できるように）
+        if not conn.execute('SELECT 1 FROM users WHERE id=?', (SINGLE_USER_ID,)).fetchone():
+            conn.execute(
+                'INSERT INTO users (id, username, password_hash, credit_limit) VALUES (?,?,?,0)',
+                (SINGLE_USER_ID, 'default', '')
+            )
+
         # 旧 salary.amount を monthly_salary へ移行
         old = conn.execute('SELECT amount FROM salary LIMIT 1').fetchone()
         if old and old['amount'] > 0:
@@ -456,6 +463,11 @@ def settings():
             limit = int(request.form.get('credit_limit', 0) or 0)
             with get_db() as conn:
                 conn.execute('UPDATE users SET credit_limit=? WHERE id=?', (limit, uid))
+                if conn.execute('SELECT changes()').fetchone()[0] == 0:
+                    conn.execute(
+                        'INSERT INTO users (id, username, password_hash, credit_limit) VALUES (?,?,?,?)',
+                        (uid, 'default', '', limit)
+                    )
             flash('クレカ上限額を更新しました')
 
         elif action == 'add_fixed':
