@@ -106,9 +106,9 @@
       </form>
     </div>
 
-    <!-- 名前・金額編集（翌月から） -->
+    <!-- 名前・金額編集（指定月から） -->
     <details>
-      <summary class="edit-summary">名前・金額を変更（翌月から）</summary>
+      <summary class="edit-summary">名前・金額を変更（指定月から）</summary>
       <form method="POST" action="/settings" style="margin-top:10px;">
         <input type="hidden" name="action" value="edit_fixed">
         <input type="hidden" name="item_id" value="{{ f.item_id }}">
@@ -118,13 +118,20 @@
             <input type="text" name="name" value="{{ pend.name if pend else f.name }}">
           </div>
           <div class="form-group">
-            <label>金額（円）</label>
-            <input type="number" name="amount" value="{{ pend.amount if pend else f.amount }}" inputmode="numeric">
+            <label>金額（円）※0で無効</label>
+            <input type="number" name="amount" value="{{ pend.amount if pend else f.amount }}" min="0" inputmode="numeric">
           </div>
         </div>
-        <button type="submit" class="btn btn-success btn-block" style="font-size:0.85rem;">
-          翌月({{ next_ym | fmt_ym }})から変更
-        </button>
+        <div class="form-group">
+          <label>適用開始月</label>
+          <select name="target_ym">
+            {% for i in range(1, 13) %}
+            {% set m = next_ym_list[i-1] %}
+            <option value="{{ m }}" {% if i == 1 %}selected{% endif %}>{{ m | fmt_ym }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <button type="submit" class="btn btn-success btn-block" style="font-size:0.85rem;">変更を登録</button>
       </form>
     </details>
 

@@ -141,11 +141,27 @@ app.jinja_env.filters['fmt_money'] = fmt_money
 app.jinja_env.filters['fmt_ym'] = fmt_ym
 
 
+def calc_balance_for_ym(conn, ym):
+    """指定月の残高を計算して返す"""
+    ms = conn.execute('SELECT amount FROM monthly_salary WHERE ym=?', (ym,)).fetchone()
+    salary = ms['amount'] if ms else 0
+    fixed = get_fixed_for_ym(conn, ym)
+    fixed_total = sum(f['amount'] for f in fixed)
+    expenses = conn.execute(
+        'SELECT amount FROM variable_expenses WHERE billing_ym=?', (ym,)
+    ).fetchall()
+    variable_total = sum(e['amount'] for e in expenses)
+    extra = conn.execute('SELECT amount FROM extra_income WHERE ym=?', (ym,)).fetchall()
+    extra_total = sum(i['amount'] for i in extra)
+    return salary + extra_total - fixed_total - variable_total
+
+
 def get_fixed_for_ym(conn, ym):
-    """指定月に有効な固定費（各item_idの最新バージョン）を返す"""
+    """指定月に有効な固定費（各item_idの最新バージョン、amount>0のみ）を返す"""
     return conn.execute('''
         SELECT f1.* FROM fixed_expenses f1
         WHERE f1.active = 1
+          AND f1.amount > 0
           AND f1.effective_ym <= ?
           AND f1.effective_ym = (
               SELECT MAX(f2.effective_ym)
@@ -224,11 +240,19 @@ def index():
         ).fetchall()
         extra_total = sum(i['amount'] for i in extra_incomes)
 
-    balance = salary + extra_total - fixed_total - variable_total
-
     current = date(year, month, 1)
     prev_ym = add_months(current, -1).strftime('%Y-%m')
     next_ym = add_months(current, 1).strftime('%Y-%m')
+
+    # 前月が終了済みなら繰越計算（当月1日以降 = 前月は確定）
+    prev_month_ended = date.today() >= current
+    if prev_month_ended:
+        with get_db() as conn:
+            carryover = calc_balance_for_ym(conn, prev_ym)
+    else:
+        carryover = 0
+
+    balance = salary + extra_total + carryover - fixed_total - variable_total
 
     return render_template('index.html',
         ym=ym, salary=salary,
@@ -238,6 +262,7 @@ def index():
         credit_limit=credit_limit,
         card_used_this_month=card_used_this_month,
         extra_incomes=extra_incomes, extra_total=extra_total,
+        carryover=carryover, prev_month_ended=prev_month_ended,
         balance=balance, prev_ym=prev_ym, next_ym=next_ym,
     )
 
@@ -295,20 +320,24 @@ def settings():
             flash(f'翌月({fmt_ym(next_ym)})から「{new_type}」に変更します')
 
         elif action == 'edit_fixed':
-            # 名前・金額変更 → 翌月バージョン作成
-            item_id = int(request.form.get('item_id'))
-            name    = request.form.get('name', '').strip()
-            amount  = int(request.form.get('amount', 0) or 0)
-            if name and amount > 0:
+            # 名前・金額変更 → 指定月バージョン作成
+            item_id    = int(request.form.get('item_id'))
+            name       = request.form.get('name', '').strip()
+            amount     = int(request.form.get('amount', 0) or 0)
+            target_ym  = request.form.get('target_ym', next_ym)
+            if name:
                 with get_db() as conn:
                     current = conn.execute(
                         'SELECT * FROM fixed_expenses WHERE item_id=? AND active=1 AND effective_ym<=? '
                         'ORDER BY effective_ym DESC LIMIT 1', (item_id, today_ym)
                     ).fetchone()
                     if current:
-                        upsert_next_version(conn, item_id, next_ym,
+                        upsert_next_version(conn, item_id, target_ym,
                                             name, amount, current['type'])
-                flash(f'翌月({fmt_ym(next_ym)})から「{name} {fmt_money(amount)}」に変更します')
+                if amount == 0:
+                    flash(f'{fmt_ym(target_ym)}から「{name}」を0円（無効）に変更します')
+                else:
+                    flash(f'{fmt_ym(target_ym)}から「{name} {fmt_money(amount)}」に変更します')
 
         elif action == 'delete_fixed':
             item_id = request.form.get('item_id')
@@ -363,12 +392,16 @@ def settings():
 
         cards = conn.execute('SELECT * FROM credit_cards ORDER BY id').fetchall()
 
+    base = date.today().replace(day=1)
+    next_ym_list = [add_months(base, i).strftime('%Y-%m') for i in range(1, 13)]
+
     return render_template('settings.html',
         credit_limit=credit_limit,
         monthly_salaries=monthly_salaries,
         today_ym=today_ym,
         fixed=fixed, pending=pending,
-        cards=cards, next_ym=next_ym)
+        cards=cards, next_ym=next_ym,
+        next_ym_list=next_ym_list)
 
 
 @app.route('/expense', methods=['GET', 'POST'])

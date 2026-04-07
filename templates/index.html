@@ -25,7 +25,7 @@
   <div class="amount {% if balance >= 0 %}positive{% else %}negative{% endif %}">
     {{ balance | fmt_money }}
   </div>
-  <div class="sub">給料 + 臨時収入 - 固定費 - 変動費</div>
+  <div class="sub">給料{% if prev_month_ended and carryover != 0 %} + 前月繰越{% endif %} + 臨時収入 - 固定費 - 変動費</div>
 </div>
 
 <!-- 内訳 -->
@@ -34,6 +34,14 @@
     <div class="lbl">給料</div>
     <div class="val income">{{ salary | fmt_money }}</div>
   </div>
+  {% if prev_month_ended and carryover != 0 %}
+  <div class="bd-item">
+    <div class="lbl">前月繰越</div>
+    <div class="val {% if carryover >= 0 %}income{% else %}expense{% endif %}">
+      {% if carryover >= 0 %}+{% endif %}{{ carryover | fmt_money }}
+    </div>
+  </div>
+  {% endif %}
   {% if extra_total > 0 %}
   <div class="bd-item">
     <div class="lbl">臨時収入</div>
