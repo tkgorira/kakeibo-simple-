@@ -1,103 +1,240 @@
 from flask import Flask, render_template, request, redirect, url_for, flash
+from flask_login import (LoginManager, UserMixin, login_user,
+                         logout_user, login_required, current_user)
+from werkzeug.security import generate_password_hash, check_password_hash
 import sqlite3
+import os
+import contextlib
 from datetime import date
 from calendar import monthrange
 
 app = Flask(__name__)
-app.secret_key = 'kakeibo-2026'
-DB = 'kakeibo.db'
+app.secret_key = os.environ.get('SECRET_KEY', 'kakeibo-dev-secret-2026')
+
+# ── Database ───────────────────────────────────────────────────────────────
+
+_DATABASE_URL = os.environ.get('DATABASE_URL', '')
+if _DATABASE_URL.startswith('postgres://'):
+    _DATABASE_URL = _DATABASE_URL.replace('postgres://', 'postgresql://', 1)
+IS_PG = bool(_DATABASE_URL)
+SQLITE_DB = 'kakeibo.db'
+
+if IS_PG:
+    import psycopg2
+    import psycopg2.extras
 
 
-# ── DB helpers ─────────────────────────────────────────────────────────────
+class _PGCursor:
+    """psycopg2 カーソルを sqlite3.Cursor ライクなインターフェースでラップ"""
+    def __init__(self, cursor, has_returning=False):
+        self._c = cursor
+        self.lastrowid = None
+        if has_returning:
+            row = self._c.fetchone()
+            self.lastrowid = row['id'] if row else None
 
+    def fetchone(self):
+        return self._c.fetchone()
+
+    def fetchall(self):
+        return self._c.fetchall()
+
+
+class _PGConn:
+    """psycopg2 コネクションを sqlite3 ライクなインターフェースでラップ"""
+    def __init__(self, conn):
+        self._conn = conn
+
+    def execute(self, sql, params=()):
+        pg_sql = sql.replace('?', '%s')
+        has_returning = 'RETURNING' in pg_sql.upper()
+        cur = self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(pg_sql, list(params) if params else [])
+        return _PGCursor(cur, has_returning)
+
+
+@contextlib.contextmanager
 def get_db():
-    conn = sqlite3.connect(DB)
-    conn.row_factory = sqlite3.Row
-    return conn
+    if IS_PG:
+        conn = psycopg2.connect(_DATABASE_URL)
+        wrapped = _PGConn(conn)
+        try:
+            yield wrapped
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+    else:
+        conn = sqlite3.connect(SQLITE_DB)
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
+
+def insert_get_id(conn, sql, params):
+    """INSERT して新規行の id を返す（PostgreSQL/SQLite 両対応）"""
+    if IS_PG:
+        return conn.execute(sql + ' RETURNING id', params).lastrowid
+    return conn.execute(sql, params).lastrowid
+
+
+def upsert_monthly_salary(conn, ym, amount):
+    """月別給料を INSERT OR REPLACE（両DB対応）"""
+    if IS_PG:
+        conn.execute(
+            'INSERT INTO monthly_salary (ym, amount) VALUES (?,?) '
+            'ON CONFLICT (ym) DO UPDATE SET amount = EXCLUDED.amount',
+            (ym, amount)
+        )
+    else:
+        conn.execute(
+            'INSERT OR REPLACE INTO monthly_salary (ym, amount) VALUES (?,?)',
+            (ym, amount)
+        )
+
+
+def insert_ignore_monthly_salary(conn, ym, amount):
+    """月別給料を INSERT OR IGNORE（両DB対応）"""
+    if IS_PG:
+        conn.execute(
+            'INSERT INTO monthly_salary (ym, amount) VALUES (?,?) ON CONFLICT (ym) DO NOTHING',
+            (ym, amount)
+        )
+    else:
+        conn.execute(
+            'INSERT OR IGNORE INTO monthly_salary (ym, amount) VALUES (?,?)',
+            (ym, amount)
+        )
+
+
+# ── Flask-Login ────────────────────────────────────────────────────────────
+
+login_manager = LoginManager(app)
+login_manager.login_view = 'login'
+login_manager.login_message = 'ログインしてください'
+
+
+class User(UserMixin):
+    def __init__(self, id, username):
+        self.id = id
+        self.username = username
+
+
+@login_manager.user_loader
+def load_user(user_id):
+    with get_db() as conn:
+        row = conn.execute(
+            'SELECT id, username FROM users WHERE id = ?', (user_id,)
+        ).fetchone()
+    if row:
+        return User(row['id'], row['username'])
+    return None
+
+
+# ── DB Init ────────────────────────────────────────────────────────────────
 
 def init_db():
+    pk = 'SERIAL' if IS_PG else 'INTEGER'
+
+    tables = [
+        f'''CREATE TABLE IF NOT EXISTS users (
+            id {pk} PRIMARY KEY,
+            username TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL
+        )''',
+        f'''CREATE TABLE IF NOT EXISTS salary (
+            id {pk} PRIMARY KEY,
+            amount INTEGER NOT NULL DEFAULT 0,
+            credit_limit INTEGER DEFAULT 0
+        )''',
+        f'''CREATE TABLE IF NOT EXISTS fixed_expenses (
+            id {pk} PRIMARY KEY,
+            item_id INTEGER,
+            name TEXT NOT NULL,
+            amount INTEGER NOT NULL,
+            type TEXT NOT NULL DEFAULT '固定',
+            effective_ym TEXT NOT NULL DEFAULT '2000-01',
+            active INTEGER DEFAULT 1
+        )''',
+        f'''CREATE TABLE IF NOT EXISTS credit_cards (
+            id {pk} PRIMARY KEY,
+            name TEXT NOT NULL,
+            closing_day INTEGER NOT NULL DEFAULT 25,
+            fixed_months INTEGER DEFAULT 0
+        )''',
+        f'''CREATE TABLE IF NOT EXISTS variable_expenses (
+            id {pk} PRIMARY KEY,
+            expense_date TEXT NOT NULL,
+            amount INTEGER NOT NULL,
+            category TEXT DEFAULT '',
+            note TEXT DEFAULT '',
+            payment_type TEXT NOT NULL DEFAULT 'cash',
+            card_id INTEGER,
+            billing_ym TEXT NOT NULL
+        )''',
+        f'''CREATE TABLE IF NOT EXISTS extra_income (
+            id {pk} PRIMARY KEY,
+            income_date TEXT NOT NULL,
+            amount INTEGER NOT NULL,
+            note TEXT DEFAULT '',
+            ym TEXT NOT NULL
+        )''',
+        '''CREATE TABLE IF NOT EXISTS monthly_salary (
+            ym TEXT PRIMARY KEY,
+            amount INTEGER NOT NULL DEFAULT 0
+        )''',
+    ]
+
     with get_db() as conn:
-        conn.executescript('''
-            CREATE TABLE IF NOT EXISTS salary (
-                id INTEGER PRIMARY KEY,
-                amount INTEGER NOT NULL DEFAULT 0
-            );
-            CREATE TABLE IF NOT EXISTS fixed_expenses (
-                id INTEGER PRIMARY KEY,
-                item_id INTEGER,
-                name TEXT NOT NULL,
-                amount INTEGER NOT NULL,
-                type TEXT NOT NULL DEFAULT '固定',
-                effective_ym TEXT NOT NULL DEFAULT '2000-01',
-                active INTEGER DEFAULT 1
-            );
-            CREATE TABLE IF NOT EXISTS credit_cards (
-                id INTEGER PRIMARY KEY,
-                name TEXT NOT NULL,
-                closing_day INTEGER NOT NULL DEFAULT 25,
-                fixed_months INTEGER DEFAULT 0
-            );
-            CREATE TABLE IF NOT EXISTS variable_expenses (
-                id INTEGER PRIMARY KEY,
-                expense_date TEXT NOT NULL,
-                amount INTEGER NOT NULL,
-                category TEXT DEFAULT '',
-                note TEXT DEFAULT '',
-                payment_type TEXT NOT NULL DEFAULT 'cash',
-                card_id INTEGER,
-                billing_ym TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS extra_income (
-                id INTEGER PRIMARY KEY,
-                income_date TEXT NOT NULL,
-                amount INTEGER NOT NULL,
-                note TEXT DEFAULT '',
-                ym TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS monthly_salary (
-                ym TEXT PRIMARY KEY,
-                amount INTEGER NOT NULL DEFAULT 0
-            );
-        ''')
-        # マイグレーション: 既存DBに新カラムを追加
+        for stmt in tables:
+            conn.execute(stmt)
+
+        # マイグレーション: カラム追加（既存DBへの対応）
+        def add_col(table, col, definition):
+            if IS_PG:
+                # PostgreSQL: IF NOT EXISTS でエラー回避
+                conn.execute(f'ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {definition}')
+            else:
+                try:
+                    conn.execute(f'ALTER TABLE {table} ADD COLUMN {col} {definition}')
+                except Exception:
+                    pass
+
         for col, definition in [
             ('item_id',      'INTEGER'),
             ('type',         "TEXT NOT NULL DEFAULT '固定'"),
             ('effective_ym', "TEXT NOT NULL DEFAULT '2000-01'"),
         ]:
-            try:
-                conn.execute(f'ALTER TABLE fixed_expenses ADD COLUMN {col} {definition}')
-            except Exception:
-                pass
-        # 既存行: item_id未設定のものに id を割り当て
+            add_col('fixed_expenses', col, definition)
+
+        add_col('salary', 'credit_limit', 'INTEGER DEFAULT 0')
+        add_col('credit_cards', 'fixed_months', 'INTEGER DEFAULT 0')
+
         conn.execute("UPDATE fixed_expenses SET item_id = id WHERE item_id IS NULL")
         conn.execute("UPDATE fixed_expenses SET effective_ym = '2000-01' WHERE effective_ym = '' OR effective_ym IS NULL")
-        try:
-            conn.execute('ALTER TABLE credit_cards ADD COLUMN fixed_months INTEGER DEFAULT 0')
-        except Exception:
-            pass
-        try:
-            conn.execute('ALTER TABLE salary ADD COLUMN credit_limit INTEGER DEFAULT 0')
-        except Exception:
-            pass
+
         if not conn.execute('SELECT 1 FROM salary').fetchone():
             conn.execute('INSERT INTO salary (amount) VALUES (0)')
-        # 旧 salary テーブルの金額を monthly_salary に移行（初回のみ）
-        old = conn.execute('SELECT amount FROM salary').fetchone()
+
+        # 旧 salary テーブルの金額を monthly_salary へ移行
+        old = conn.execute('SELECT amount FROM salary LIMIT 1').fetchone()
         if old and old['amount'] > 0:
             today_ym = date.today().strftime('%Y-%m')
-            conn.execute(
-                'INSERT OR IGNORE INTO monthly_salary (ym, amount) VALUES (?,?)',
-                (today_ym, old['amount'])
-            )
-            conn.execute('UPDATE salary SET amount=0')
+            insert_ignore_monthly_salary(conn, today_ym, old['amount'])
+            conn.execute('UPDATE salary SET amount = 0')
 
 
 # ── Utility ────────────────────────────────────────────────────────────────
 
 def add_months(d, n):
-    """dateにn月加算（dateutil不要）"""
     month = d.month - 1 + n
     year = d.year + month // 12
     month = month % 12 + 1
@@ -106,25 +243,17 @@ def add_months(d, n):
 
 
 def calc_billing_ym(expense_date_str, payment_type, card_id=None):
-    """引き落とし年月を返す (YYYY-MM)"""
     d = date.fromisoformat(expense_date_str)
     if payment_type == 'cash':
         return d.strftime('%Y-%m')
-
     with get_db() as conn:
         card = conn.execute('SELECT * FROM credit_cards WHERE id=?', (card_id,)).fetchone()
     if not card:
         return d.strftime('%Y-%m')
-
-    # 固定月数が設定されている場合（例: ETCカード = 3か月後）
     if card['fixed_months']:
         return add_months(d, card['fixed_months']).strftime('%Y-%m')
-
     closing_day = card['closing_day']
-    if d.day <= closing_day:
-        billing = add_months(d, 1)   # 締め日以内 → 翌月
-    else:
-        billing = add_months(d, 2)   # 締め日超過 → 翌々月
+    billing = add_months(d, 1) if d.day <= closing_day else add_months(d, 2)
     return billing.strftime('%Y-%m')
 
 
@@ -142,7 +271,6 @@ app.jinja_env.filters['fmt_ym'] = fmt_ym
 
 
 def calc_balance_for_ym(conn, ym):
-    """指定月の残高を計算して返す"""
     ms = conn.execute('SELECT amount FROM monthly_salary WHERE ym=?', (ym,)).fetchone()
     salary = ms['amount'] if ms else 0
     fixed = get_fixed_for_ym(conn, ym)
@@ -157,7 +285,6 @@ def calc_balance_for_ym(conn, ym):
 
 
 def get_fixed_for_ym(conn, ym):
-    """指定月に有効な固定費（各item_idの最新バージョン、amount>0のみ）を返す"""
     return conn.execute('''
         SELECT f1.* FROM fixed_expenses f1
         WHERE f1.active = 1
@@ -175,7 +302,6 @@ def get_fixed_for_ym(conn, ym):
 
 
 def upsert_next_version(conn, item_id, next_ym, name, amount, type_):
-    """翌月バージョンを作成または更新する"""
     existing = conn.execute(
         'SELECT id FROM fixed_expenses WHERE item_id=? AND effective_ym=? AND active=1',
         (item_id, next_ym)
@@ -192,9 +318,80 @@ def upsert_next_version(conn, item_id, next_ym, name, amount, type_):
         )
 
 
-# ── Routes ─────────────────────────────────────────────────────────────────
+# ── Auth Routes ────────────────────────────────────────────────────────────
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if current_user.is_authenticated:
+        return redirect(url_for('index'))
+
+    with get_db() as conn:
+        has_users = conn.execute('SELECT 1 FROM users LIMIT 1').fetchone()
+
+    if not has_users:
+        return redirect(url_for('register'))
+
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+        with get_db() as conn:
+            row = conn.execute(
+                'SELECT id, username, password_hash FROM users WHERE username = ?', (username,)
+            ).fetchone()
+        if row and check_password_hash(row['password_hash'], password):
+            login_user(User(row['id'], row['username']), remember=True)
+            return redirect(request.args.get('next') or url_for('index'))
+        flash('ユーザー名またはパスワードが間違っています')
+
+    return render_template('login.html')
+
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    with get_db() as conn:
+        has_users = conn.execute('SELECT 1 FROM users LIMIT 1').fetchone()
+
+    # 既にユーザーが存在する場合はログイン済みユーザーのみ登録可
+    if has_users and not current_user.is_authenticated:
+        return redirect(url_for('login'))
+
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+        confirm  = request.form.get('confirm', '')
+
+        if not username or not password:
+            flash('ユーザー名とパスワードを入力してください')
+        elif password != confirm:
+            flash('パスワードが一致しません')
+        elif len(password) < 6:
+            flash('パスワードは6文字以上にしてください')
+        else:
+            with get_db() as conn:
+                if conn.execute('SELECT 1 FROM users WHERE username = ?', (username,)).fetchone():
+                    flash('そのユーザー名はすでに使われています')
+                else:
+                    conn.execute(
+                        'INSERT INTO users (username, password_hash) VALUES (?,?)',
+                        (username, generate_password_hash(password))
+                    )
+                    flash(f'ユーザー「{username}」を登録しました。ログインしてください。')
+                    return redirect(url_for('login'))
+
+    return render_template('register.html')
+
+
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    return redirect(url_for('login'))
+
+
+# ── App Routes ─────────────────────────────────────────────────────────────
 
 @app.route('/')
+@login_required
 def index():
     ym = request.args.get('ym', date.today().strftime('%Y-%m'))
     year, month = map(int, ym.split('-'))
@@ -224,13 +421,13 @@ def index():
         etc_total = sum(e['amount'] for e in expenses
                         if e['payment_type'] == 'card' and e['card_fixed_months'])
 
-        # アラート用: 当月に使用したカード支出（expense_date基準）
+        # 当月カード使用額（expense_date 基準、SQLite/PG両対応）
         used_rows = conn.execute(
             '''SELECT e.amount, c.fixed_months as card_fixed_months
                FROM variable_expenses e
                LEFT JOIN credit_cards c ON e.card_id = c.id
                WHERE e.payment_type = 'card'
-                 AND strftime('%Y-%m', e.expense_date) = ?''',
+                 AND substr(e.expense_date, 1, 7) = ?''',
             (ym,)
         ).fetchall()
         card_used_this_month = sum(r['amount'] for r in used_rows)
@@ -244,7 +441,6 @@ def index():
     prev_ym = add_months(current, -1).strftime('%Y-%m')
     next_ym = add_months(current, 1).strftime('%Y-%m')
 
-    # 前月が終了済みなら繰越計算（当月1日以降 = 前月は確定）
     prev_month_ended = date.today() >= current
     if prev_month_ended:
         with get_db() as conn:
@@ -268,6 +464,7 @@ def index():
 
 
 @app.route('/settings', methods=['GET', 'POST'])
+@login_required
 def settings():
     today_ym = date.today().strftime('%Y-%m')
     next_ym  = add_months(date.today().replace(day=1), 1).strftime('%Y-%m')
@@ -279,10 +476,7 @@ def settings():
             amount = int(request.form.get('amount', 0) or 0)
             ym = request.form.get('ym', date.today().strftime('%Y-%m'))
             with get_db() as conn:
-                conn.execute(
-                    'INSERT OR REPLACE INTO monthly_salary (ym, amount) VALUES (?,?)',
-                    (ym, amount)
-                )
+                upsert_monthly_salary(conn, ym, amount)
             flash(f'{fmt_ym(ym)}の給料を更新しました')
 
         elif action == 'credit_limit':
@@ -292,48 +486,55 @@ def settings():
             flash('クレカ上限額を更新しました')
 
         elif action == 'add_fixed':
-            name   = request.form.get('name', '').strip()
-            amount = int(request.form.get('amount', 0) or 0)
-            type_  = request.form.get('type', '固定')
+            name     = request.form.get('name', '').strip()
+            amount   = int(request.form.get('amount', 0) or 0)
+            type_    = request.form.get('type', '固定')
+            start_ym = request.form.get('start_ym', today_ym)
+            one_time = request.form.get('one_time') == '1'
             if name and amount > 0:
                 with get_db() as conn:
-                    cur = conn.execute(
+                    new_id = insert_get_id(
+                        conn,
                         'INSERT INTO fixed_expenses (name, amount, type, effective_ym) VALUES (?,?,?,?)',
-                        (name, amount, type_, today_ym)
+                        (name, amount, type_, start_ym)
                     )
-                    conn.execute('UPDATE fixed_expenses SET item_id=? WHERE id=?',
-                                 (cur.lastrowid, cur.lastrowid))
-                flash(f'固定費「{name}」を追加しました（今月から有効）')
+                    conn.execute('UPDATE fixed_expenses SET item_id=? WHERE id=?', (new_id, new_id))
+                    if one_time:
+                        end_ym = add_months(date.fromisoformat(start_ym + '-01'), 1).strftime('%Y-%m')
+                        conn.execute(
+                            'INSERT INTO fixed_expenses (item_id, name, amount, type, effective_ym, active) VALUES (?,?,0,?,?,1)',
+                            (new_id, name, type_, end_ym)
+                        )
+                label = f'{fmt_ym(start_ym)}のみ' if one_time else f'{fmt_ym(start_ym)}から有効'
+                flash(f'固定費「{name}」を追加しました（{label}）')
 
         elif action == 'set_type':
-            # タイプ変更 → 翌月バージョン作成
             item_id = int(request.form.get('item_id'))
             new_type = request.form.get('type')
             with get_db() as conn:
-                current = conn.execute(
+                cur_row = conn.execute(
                     'SELECT * FROM fixed_expenses WHERE item_id=? AND active=1 AND effective_ym<=? '
                     'ORDER BY effective_ym DESC LIMIT 1', (item_id, today_ym)
                 ).fetchone()
-                if current:
+                if cur_row:
                     upsert_next_version(conn, item_id, next_ym,
-                                        current['name'], current['amount'], new_type)
+                                        cur_row['name'], cur_row['amount'], new_type)
             flash(f'翌月({fmt_ym(next_ym)})から「{new_type}」に変更します')
 
         elif action == 'edit_fixed':
-            # 名前・金額変更 → 指定月バージョン作成
-            item_id    = int(request.form.get('item_id'))
-            name       = request.form.get('name', '').strip()
-            amount     = int(request.form.get('amount', 0) or 0)
-            target_ym  = request.form.get('target_ym', next_ym)
+            item_id   = int(request.form.get('item_id'))
+            name      = request.form.get('name', '').strip()
+            amount    = int(request.form.get('amount', 0) or 0)
+            target_ym = request.form.get('target_ym', next_ym)
             if name:
                 with get_db() as conn:
-                    current = conn.execute(
+                    cur_row = conn.execute(
                         'SELECT * FROM fixed_expenses WHERE item_id=? AND active=1 AND effective_ym<=? '
                         'ORDER BY effective_ym DESC LIMIT 1', (item_id, today_ym)
                     ).fetchone()
-                    if current:
+                    if cur_row:
                         upsert_next_version(conn, item_id, target_ym,
-                                            name, amount, current['type'])
+                                            name, amount, cur_row['type'])
                 if amount == 0:
                     flash(f'{fmt_ym(target_ym)}から「{name}」を0円（無効）に変更します')
                 else:
@@ -353,7 +554,7 @@ def settings():
             if billing_type == 'closing':
                 fixed_months = 0
             else:
-                closing_day = 25  # 使わないがデフォルト値
+                closing_day = 25
             if name:
                 with get_db() as conn:
                     conn.execute(
@@ -381,10 +582,8 @@ def settings():
             'SELECT ym, amount FROM monthly_salary ORDER BY ym DESC LIMIT 12'
         ).fetchall()
 
-        # 今月有効な固定費
         fixed = get_fixed_for_ym(conn, today_ym)
 
-        # 翌月に変更予定のバージョン {item_id: row}
         pending_rows = conn.execute(
             'SELECT * FROM fixed_expenses WHERE effective_ym=? AND active=1', (next_ym,)
         ).fetchall()
@@ -405,6 +604,7 @@ def settings():
 
 
 @app.route('/expense', methods=['GET', 'POST'])
+@login_required
 def expense():
     if request.method == 'POST':
         action = request.form.get('action')
@@ -456,6 +656,7 @@ def expense():
 
 
 @app.route('/expense/<int:eid>/edit', methods=['GET', 'POST'])
+@login_required
 def expense_edit(eid):
     if request.method == 'POST':
         expense_date = request.form.get('expense_date') or date.today().isoformat()
@@ -493,6 +694,7 @@ def expense_edit(eid):
 
 
 @app.route('/income', methods=['GET', 'POST'])
+@login_required
 def income():
     if request.method == 'POST':
         action = request.form.get('action')

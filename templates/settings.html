@@ -165,7 +165,20 @@
         <label for="type_var">変動</label>
       </div>
     </div>
-    <button type="submit" class="btn btn-success btn-block">今月から追加</button>
+    <div class="form-group">
+      <label>適用開始月</label>
+      <select name="start_ym">
+        <option value="{{ today_ym }}" selected>{{ today_ym | fmt_ym }}（今月）</option>
+        {% for m in next_ym_list %}
+        <option value="{{ m }}">{{ m | fmt_ym }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="form-group" style="display:flex;align-items:center;gap:8px;">
+      <input type="checkbox" name="one_time" id="one_time" value="1">
+      <label for="one_time" style="margin:0;font-weight:normal;">この月のみ（翌月以降は自動で無効）</label>
+    </div>
+    <button type="submit" class="btn btn-success btn-block">追加</button>
   </form>
 </div>
 
