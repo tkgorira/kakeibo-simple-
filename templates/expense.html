@@ -7,14 +7,9 @@
   <form method="POST" action="/expense">
     <input type="hidden" name="action" value="add">
 
-    <input type="hidden" name="expense_date" id="expense_date">
     <div class="form-group">
       <label>日付</label>
-      <div style="position:relative;">
-        <input type="text" id="d_display" placeholder="2026/01/01" readonly
-               style="cursor:pointer;" onclick="document.getElementById('d_picker').showPicker()">
-        <input type="date" id="d_picker" style="position:absolute;opacity:0;top:0;left:0;width:100%;height:100%;cursor:pointer;">
-      </div>
+      <input type="date" name="expense_date" id="expense_date" required>
     </div>
     <div class="form-group">
       <label>金額</label>
@@ -105,29 +100,6 @@ function toggleCard() {
   sel.classList.toggle('show', isCard);
 }
 
-(function() {
-  const disp   = document.getElementById('d_display');
-  const picker = document.getElementById('d_picker');
-  const hidden = document.getElementById('expense_date');
-  const today  = '{{ today }}';
-
-  function setDate(iso) {
-    hidden.value = iso;
-    picker.value = iso;
-    disp.value   = iso.replace(/-/g, '/');
-  }
-  setDate(today);
-
-  picker.addEventListener('change', function() {
-    if (picker.value) setDate(picker.value);
-  });
-
-  document.querySelector('form').addEventListener('submit', function(e) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(hidden.value)) {
-      e.preventDefault();
-      alert('日付を選択してください');
-    }
-  });
-})();
+document.getElementById('expense_date').value = '{{ today }}';
 </script>
 {% endblock %}
