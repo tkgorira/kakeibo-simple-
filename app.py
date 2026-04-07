@@ -1,12 +1,11 @@
 from flask import Flask, render_template, request, redirect, url_for, flash
-from flask_login import (LoginManager, UserMixin, login_user,
-                         logout_user, login_required, current_user)
-from werkzeug.security import generate_password_hash, check_password_hash
 import sqlite3
 import os
 import contextlib
 from datetime import date
 from calendar import monthrange
+
+SINGLE_USER_ID = 1
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'kakeibo-dev-secret-2026')
@@ -105,30 +104,6 @@ def upsert_monthly_salary(conn, ym, amount, user_id):
 def insert_ignore_monthly_salary(conn, ym, amount, user_id):
     if not conn.execute('SELECT 1 FROM monthly_salary WHERE ym=? AND user_id=?', (ym, user_id)).fetchone():
         conn.execute('INSERT INTO monthly_salary (ym, user_id, amount) VALUES (?,?,?)', (ym, user_id, amount))
-
-
-# ── Flask-Login ────────────────────────────────────────────────────────────
-
-login_manager = LoginManager(app)
-login_manager.login_view = 'login'
-login_manager.login_message = 'ログインしてください'
-
-
-class User(UserMixin):
-    def __init__(self, id, username):
-        self.id = id
-        self.username = username
-
-
-@login_manager.user_loader
-def load_user(user_id):
-    with get_db() as conn:
-        row = conn.execute(
-            'SELECT id, username FROM users WHERE id = ?', (user_id,)
-        ).fetchone()
-    if row:
-        return User(row['id'], row['username'])
-    return None
 
 
 # ── DB Init ────────────────────────────────────────────────────────────────
@@ -362,81 +337,12 @@ def upsert_next_version(conn, item_id, next_ym, name, amount, type_, user_id, ca
         )
 
 
-# ── Auth Routes ────────────────────────────────────────────────────────────
-
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if current_user.is_authenticated:
-        return redirect(url_for('index'))
-
-    with get_db() as conn:
-        has_users = conn.execute('SELECT 1 FROM users LIMIT 1').fetchone()
-
-    if not has_users:
-        return redirect(url_for('register'))
-
-    if request.method == 'POST':
-        username = request.form.get('username', '').strip()
-        password = request.form.get('password', '')
-        with get_db() as conn:
-            row = conn.execute(
-                'SELECT id, username, password_hash FROM users WHERE username = ?', (username,)
-            ).fetchone()
-        if row and check_password_hash(row['password_hash'], password):
-            login_user(User(row['id'], row['username']), remember=True)
-            return redirect(request.args.get('next') or url_for('index'))
-        flash('ユーザー名またはパスワードが間違っています')
-
-    return render_template('login.html')
-
-
-@app.route('/register', methods=['GET', 'POST'])
-def register():
-    with get_db() as conn:
-        has_users = conn.execute('SELECT 1 FROM users LIMIT 1').fetchone()
-
-    if has_users and not current_user.is_authenticated:
-        return redirect(url_for('login'))
-
-    if request.method == 'POST':
-        username = request.form.get('username', '').strip()
-        password = request.form.get('password', '')
-        confirm  = request.form.get('confirm', '')
-
-        if not username or not password:
-            flash('ユーザー名とパスワードを入力してください')
-        elif password != confirm:
-            flash('パスワードが一致しません')
-        elif len(password) < 6:
-            flash('パスワードは6文字以上にしてください')
-        else:
-            with get_db() as conn:
-                if conn.execute('SELECT 1 FROM users WHERE username = ?', (username,)).fetchone():
-                    flash('そのユーザー名はすでに使われています')
-                else:
-                    conn.execute(
-                        'INSERT INTO users (username, password_hash) VALUES (?,?)',
-                        (username, generate_password_hash(password))
-                    )
-                    flash(f'ユーザー「{username}」を登録しました。ログインしてください。')
-                    return redirect(url_for('login'))
-
-    return render_template('register.html')
-
-
-@app.route('/logout')
-@login_required
-def logout():
-    logout_user()
-    return redirect(url_for('login'))
-
-
 # ── App Routes ─────────────────────────────────────────────────────────────
 
 @app.route('/')
-@login_required
+
 def index():
-    uid = current_user.id
+    uid = SINGLE_USER_ID
     ym = request.args.get('ym', date.today().strftime('%Y-%m'))
     year, month = map(int, ym.split('-'))
 
@@ -530,9 +436,9 @@ def index():
 
 
 @app.route('/settings', methods=['GET', 'POST'])
-@login_required
+
 def settings():
-    uid = current_user.id
+    uid = SINGLE_USER_ID
     today_ym = date.today().strftime('%Y-%m')
     next_ym  = add_months(date.today().replace(day=1), 1).strftime('%Y-%m')
 
@@ -674,9 +580,9 @@ def settings():
 
 
 @app.route('/expense', methods=['GET', 'POST'])
-@login_required
+
 def expense():
-    uid = current_user.id
+    uid = SINGLE_USER_ID
 
     if request.method == 'POST':
         action = request.form.get('action')
@@ -730,9 +636,9 @@ def expense():
 
 
 @app.route('/expense/<int:eid>/edit', methods=['GET', 'POST'])
-@login_required
+
 def expense_edit(eid):
-    uid = current_user.id
+    uid = SINGLE_USER_ID
 
     if request.method == 'POST':
         expense_date = request.form.get('expense_date') or date.today().isoformat()
@@ -770,9 +676,9 @@ def expense_edit(eid):
 
 
 @app.route('/income', methods=['GET', 'POST'])
-@login_required
+
 def income():
-    uid = current_user.id
+    uid = SINGLE_USER_ID
 
     if request.method == 'POST':
         action = request.form.get('action')
