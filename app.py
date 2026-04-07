@@ -25,7 +25,6 @@ if IS_PG:
 
 
 class _PGCursor:
-    """psycopg2 カーソルを sqlite3.Cursor ライクなインターフェースでラップ"""
     def __init__(self, cursor, has_returning=False):
         self._c = cursor
         self.lastrowid = None
@@ -41,7 +40,6 @@ class _PGCursor:
 
 
 class _PGConn:
-    """psycopg2 コネクションを sqlite3 ライクなインターフェースでラップ"""
     def __init__(self, conn):
         self._conn = conn
 
@@ -80,39 +78,33 @@ def get_db():
 
 
 def insert_get_id(conn, sql, params):
-    """INSERT して新規行の id を返す（PostgreSQL/SQLite 両対応）"""
     if IS_PG:
         return conn.execute(sql + ' RETURNING id', params).lastrowid
     return conn.execute(sql, params).lastrowid
 
 
-def upsert_monthly_salary(conn, ym, amount):
-    """月別給料を INSERT OR REPLACE（両DB対応）"""
+def _has_column(conn, table, col):
+    """テーブルにカラムが存在するか確認（SQLite/PG両対応）"""
     if IS_PG:
-        conn.execute(
-            'INSERT INTO monthly_salary (ym, amount) VALUES (?,?) '
-            'ON CONFLICT (ym) DO UPDATE SET amount = EXCLUDED.amount',
-            (ym, amount)
-        )
+        return bool(conn.execute(
+            'SELECT 1 FROM information_schema.columns WHERE table_name=? AND column_name=?',
+            (table, col)
+        ).fetchone())
     else:
-        conn.execute(
-            'INSERT OR REPLACE INTO monthly_salary (ym, amount) VALUES (?,?)',
-            (ym, amount)
-        )
+        rows = conn.execute(f'PRAGMA table_info({table})').fetchall()
+        return any(row['name'] == col for row in rows)
 
 
-def insert_ignore_monthly_salary(conn, ym, amount):
-    """月別給料を INSERT OR IGNORE（両DB対応）"""
-    if IS_PG:
-        conn.execute(
-            'INSERT INTO monthly_salary (ym, amount) VALUES (?,?) ON CONFLICT (ym) DO NOTHING',
-            (ym, amount)
-        )
+def upsert_monthly_salary(conn, ym, amount, user_id):
+    if conn.execute('SELECT 1 FROM monthly_salary WHERE ym=? AND user_id=?', (ym, user_id)).fetchone():
+        conn.execute('UPDATE monthly_salary SET amount=? WHERE ym=? AND user_id=?', (amount, ym, user_id))
     else:
-        conn.execute(
-            'INSERT OR IGNORE INTO monthly_salary (ym, amount) VALUES (?,?)',
-            (ym, amount)
-        )
+        conn.execute('INSERT INTO monthly_salary (ym, user_id, amount) VALUES (?,?,?)', (ym, user_id, amount))
+
+
+def insert_ignore_monthly_salary(conn, ym, amount, user_id):
+    if not conn.execute('SELECT 1 FROM monthly_salary WHERE ym=? AND user_id=?', (ym, user_id)).fetchone():
+        conn.execute('INSERT INTO monthly_salary (ym, user_id, amount) VALUES (?,?,?)', (ym, user_id, amount))
 
 
 # ── Flask-Login ────────────────────────────────────────────────────────────
@@ -148,7 +140,8 @@ def init_db():
         f'''CREATE TABLE IF NOT EXISTS users (
             id {pk} PRIMARY KEY,
             username TEXT NOT NULL UNIQUE,
-            password_hash TEXT NOT NULL
+            password_hash TEXT NOT NULL,
+            credit_limit INTEGER DEFAULT 0
         )''',
         f'''CREATE TABLE IF NOT EXISTS salary (
             id {pk} PRIMARY KEY,
@@ -162,13 +155,15 @@ def init_db():
             amount INTEGER NOT NULL,
             type TEXT NOT NULL DEFAULT '固定',
             effective_ym TEXT NOT NULL DEFAULT '2000-01',
-            active INTEGER DEFAULT 1
+            active INTEGER DEFAULT 1,
+            user_id INTEGER NOT NULL DEFAULT 0
         )''',
         f'''CREATE TABLE IF NOT EXISTS credit_cards (
             id {pk} PRIMARY KEY,
             name TEXT NOT NULL,
             closing_day INTEGER NOT NULL DEFAULT 25,
-            fixed_months INTEGER DEFAULT 0
+            fixed_months INTEGER DEFAULT 0,
+            user_id INTEGER NOT NULL DEFAULT 0
         )''',
         f'''CREATE TABLE IF NOT EXISTS variable_expenses (
             id {pk} PRIMARY KEY,
@@ -178,18 +173,23 @@ def init_db():
             note TEXT DEFAULT '',
             payment_type TEXT NOT NULL DEFAULT 'cash',
             card_id INTEGER,
-            billing_ym TEXT NOT NULL
+            billing_ym TEXT NOT NULL,
+            user_id INTEGER NOT NULL DEFAULT 0
         )''',
         f'''CREATE TABLE IF NOT EXISTS extra_income (
             id {pk} PRIMARY KEY,
             income_date TEXT NOT NULL,
             amount INTEGER NOT NULL,
             note TEXT DEFAULT '',
-            ym TEXT NOT NULL
+            ym TEXT NOT NULL,
+            user_id INTEGER NOT NULL DEFAULT 0
         )''',
+        # monthly_salary は複合PK (ym, user_id) で新規作成
         '''CREATE TABLE IF NOT EXISTS monthly_salary (
-            ym TEXT PRIMARY KEY,
-            amount INTEGER NOT NULL DEFAULT 0
+            ym TEXT NOT NULL,
+            user_id INTEGER NOT NULL DEFAULT 0,
+            amount INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (ym, user_id)
         )''',
     ]
 
@@ -197,10 +197,9 @@ def init_db():
         for stmt in tables:
             conn.execute(stmt)
 
-        # マイグレーション: カラム追加（既存DBへの対応）
+        # ── カラム追加マイグレーション ──────────────────────────────
         def add_col(table, col, definition):
             if IS_PG:
-                # PostgreSQL: IF NOT EXISTS でエラー回避
                 conn.execute(f'ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {definition}')
             else:
                 try:
@@ -208,6 +207,14 @@ def init_db():
                 except Exception:
                     pass
 
+        # 既存テーブルに user_id を追加
+        for table in ['fixed_expenses', 'credit_cards', 'variable_expenses', 'extra_income']:
+            add_col(table, 'user_id', 'INTEGER NOT NULL DEFAULT 0')
+
+        # users テーブルに credit_limit を追加
+        add_col('users', 'credit_limit', 'INTEGER DEFAULT 0')
+
+        # 固定費カラム追加
         for col, definition in [
             ('item_id',      'INTEGER'),
             ('type',         "TEXT NOT NULL DEFAULT '固定'"),
@@ -218,17 +225,30 @@ def init_db():
         add_col('salary', 'credit_limit', 'INTEGER DEFAULT 0')
         add_col('credit_cards', 'fixed_months', 'INTEGER DEFAULT 0')
 
+        # monthly_salary: 古い (ym TEXT PRIMARY KEY) スキーマを複合PKに移行
+        if not _has_column(conn, 'monthly_salary', 'user_id'):
+            conn.execute('''CREATE TABLE monthly_salary_new (
+                ym TEXT NOT NULL,
+                user_id INTEGER NOT NULL DEFAULT 0,
+                amount INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (ym, user_id)
+            )''')
+            conn.execute('INSERT INTO monthly_salary_new (ym, user_id, amount) SELECT ym, 0, amount FROM monthly_salary')
+            conn.execute('DROP TABLE monthly_salary')
+            conn.execute('ALTER TABLE monthly_salary_new RENAME TO monthly_salary')
+
+        # データ整合性
         conn.execute("UPDATE fixed_expenses SET item_id = id WHERE item_id IS NULL")
         conn.execute("UPDATE fixed_expenses SET effective_ym = '2000-01' WHERE effective_ym = '' OR effective_ym IS NULL")
 
         if not conn.execute('SELECT 1 FROM salary').fetchone():
             conn.execute('INSERT INTO salary (amount) VALUES (0)')
 
-        # 旧 salary テーブルの金額を monthly_salary へ移行
+        # 旧 salary.amount を monthly_salary へ移行
         old = conn.execute('SELECT amount FROM salary LIMIT 1').fetchone()
         if old and old['amount'] > 0:
             today_ym = date.today().strftime('%Y-%m')
-            insert_ignore_monthly_salary(conn, today_ym, old['amount'])
+            insert_ignore_monthly_salary(conn, today_ym, old['amount'], 0)
             conn.execute('UPDATE salary SET amount = 0')
 
 
@@ -270,41 +290,43 @@ app.jinja_env.filters['fmt_money'] = fmt_money
 app.jinja_env.filters['fmt_ym'] = fmt_ym
 
 
-def calc_balance_for_ym(conn, ym):
-    ms = conn.execute('SELECT amount FROM monthly_salary WHERE ym=?', (ym,)).fetchone()
-    salary = ms['amount'] if ms else 0
-    fixed = get_fixed_for_ym(conn, ym)
-    fixed_total = sum(f['amount'] for f in fixed)
-    expenses = conn.execute(
-        'SELECT amount FROM variable_expenses WHERE billing_ym=?', (ym,)
-    ).fetchall()
-    variable_total = sum(e['amount'] for e in expenses)
-    extra = conn.execute('SELECT amount FROM extra_income WHERE ym=?', (ym,)).fetchall()
-    extra_total = sum(i['amount'] for i in extra)
-    return salary + extra_total - fixed_total - variable_total
-
-
-def get_fixed_for_ym(conn, ym):
+def get_fixed_for_ym(conn, ym, user_id):
     return conn.execute('''
         SELECT f1.* FROM fixed_expenses f1
         WHERE f1.active = 1
           AND f1.amount > 0
+          AND f1.user_id = ?
           AND f1.effective_ym <= ?
           AND f1.effective_ym = (
               SELECT MAX(f2.effective_ym)
               FROM fixed_expenses f2
               WHERE f2.item_id = f1.item_id
+                AND f2.user_id = ?
                 AND f2.active = 1
                 AND f2.effective_ym <= ?
           )
         ORDER BY f1.item_id
-    ''', (ym, ym)).fetchall()
+    ''', (user_id, ym, user_id, ym)).fetchall()
 
 
-def upsert_next_version(conn, item_id, next_ym, name, amount, type_):
+def calc_balance_for_ym(conn, ym, user_id):
+    ms = conn.execute('SELECT amount FROM monthly_salary WHERE ym=? AND user_id=?', (ym, user_id)).fetchone()
+    salary = ms['amount'] if ms else 0
+    fixed = get_fixed_for_ym(conn, ym, user_id)
+    fixed_total = sum(f['amount'] for f in fixed)
+    expenses = conn.execute(
+        'SELECT amount FROM variable_expenses WHERE billing_ym=? AND user_id=?', (ym, user_id)
+    ).fetchall()
+    variable_total = sum(e['amount'] for e in expenses)
+    extra = conn.execute('SELECT amount FROM extra_income WHERE ym=? AND user_id=?', (ym, user_id)).fetchall()
+    extra_total = sum(i['amount'] for i in extra)
+    return salary + extra_total - fixed_total - variable_total
+
+
+def upsert_next_version(conn, item_id, next_ym, name, amount, type_, user_id):
     existing = conn.execute(
-        'SELECT id FROM fixed_expenses WHERE item_id=? AND effective_ym=? AND active=1',
-        (item_id, next_ym)
+        'SELECT id FROM fixed_expenses WHERE item_id=? AND effective_ym=? AND active=1 AND user_id=?',
+        (item_id, next_ym, user_id)
     ).fetchone()
     if existing:
         conn.execute(
@@ -313,8 +335,8 @@ def upsert_next_version(conn, item_id, next_ym, name, amount, type_):
         )
     else:
         conn.execute(
-            'INSERT INTO fixed_expenses (item_id, name, amount, type, effective_ym, active) VALUES (?,?,?,?,?,1)',
-            (item_id, name, amount, type_, next_ym)
+            'INSERT INTO fixed_expenses (item_id, name, amount, type, effective_ym, active, user_id) VALUES (?,?,?,?,?,1,?)',
+            (item_id, name, amount, type_, next_ym, user_id)
         )
 
 
@@ -351,7 +373,6 @@ def register():
     with get_db() as conn:
         has_users = conn.execute('SELECT 1 FROM users LIMIT 1').fetchone()
 
-    # 既にユーザーが存在する場合はログイン済みユーザーのみ登録可
     if has_users and not current_user.is_authenticated:
         return redirect(url_for('login'))
 
@@ -393,26 +414,27 @@ def logout():
 @app.route('/')
 @login_required
 def index():
+    uid = current_user.id
     ym = request.args.get('ym', date.today().strftime('%Y-%m'))
     year, month = map(int, ym.split('-'))
 
     with get_db() as conn:
-        salary_row = conn.execute('SELECT credit_limit FROM salary').fetchone()
-        credit_limit = salary_row['credit_limit'] if salary_row else 0
+        user_row = conn.execute('SELECT credit_limit FROM users WHERE id=?', (uid,)).fetchone()
+        credit_limit = user_row['credit_limit'] if user_row else 0
 
-        ms = conn.execute('SELECT amount FROM monthly_salary WHERE ym=?', (ym,)).fetchone()
+        ms = conn.execute('SELECT amount FROM monthly_salary WHERE ym=? AND user_id=?', (ym, uid)).fetchone()
         salary = ms['amount'] if ms else 0
 
-        fixed = get_fixed_for_ym(conn, ym)
+        fixed = get_fixed_for_ym(conn, ym, uid)
         fixed_total = sum(f['amount'] for f in fixed)
 
         expenses = conn.execute(
             '''SELECT e.*, c.name as card_name, c.fixed_months as card_fixed_months
                FROM variable_expenses e
                LEFT JOIN credit_cards c ON e.card_id = c.id
-               WHERE e.billing_ym = ?
+               WHERE e.billing_ym = ? AND e.user_id = ?
                ORDER BY e.expense_date DESC''',
-            (ym,)
+            (ym, uid)
         ).fetchall()
         variable_total = sum(e['amount'] for e in expenses)
         cash_total = sum(e['amount'] for e in expenses if e['payment_type'] == 'cash')
@@ -421,19 +443,19 @@ def index():
         etc_total = sum(e['amount'] for e in expenses
                         if e['payment_type'] == 'card' and e['card_fixed_months'])
 
-        # 当月カード使用額（expense_date 基準、SQLite/PG両対応）
         used_rows = conn.execute(
             '''SELECT e.amount, c.fixed_months as card_fixed_months
                FROM variable_expenses e
                LEFT JOIN credit_cards c ON e.card_id = c.id
                WHERE e.payment_type = 'card'
+                 AND e.user_id = ?
                  AND substr(e.expense_date, 1, 7) = ?''',
-            (ym,)
+            (uid, ym)
         ).fetchall()
         card_used_this_month = sum(r['amount'] for r in used_rows)
 
         extra_incomes = conn.execute(
-            'SELECT * FROM extra_income WHERE ym=? ORDER BY income_date DESC', (ym,)
+            'SELECT * FROM extra_income WHERE ym=? AND user_id=? ORDER BY income_date DESC', (ym, uid)
         ).fetchall()
         extra_total = sum(i['amount'] for i in extra_incomes)
 
@@ -444,7 +466,7 @@ def index():
     prev_month_ended = date.today() >= current
     if prev_month_ended:
         with get_db() as conn:
-            carryover = calc_balance_for_ym(conn, prev_ym)
+            carryover = calc_balance_for_ym(conn, prev_ym, uid)
     else:
         carryover = 0
 
@@ -466,6 +488,7 @@ def index():
 @app.route('/settings', methods=['GET', 'POST'])
 @login_required
 def settings():
+    uid = current_user.id
     today_ym = date.today().strftime('%Y-%m')
     next_ym  = add_months(date.today().replace(day=1), 1).strftime('%Y-%m')
 
@@ -474,15 +497,15 @@ def settings():
 
         if action == 'salary':
             amount = int(request.form.get('amount', 0) or 0)
-            ym = request.form.get('ym', date.today().strftime('%Y-%m'))
+            ym = request.form.get('ym', today_ym)
             with get_db() as conn:
-                upsert_monthly_salary(conn, ym, amount)
+                upsert_monthly_salary(conn, ym, amount, uid)
             flash(f'{fmt_ym(ym)}の給料を更新しました')
 
         elif action == 'credit_limit':
             limit = int(request.form.get('credit_limit', 0) or 0)
             with get_db() as conn:
-                conn.execute('UPDATE salary SET credit_limit=?', (limit,))
+                conn.execute('UPDATE users SET credit_limit=? WHERE id=?', (limit, uid))
             flash('クレカ上限額を更新しました')
 
         elif action == 'add_fixed':
@@ -495,15 +518,15 @@ def settings():
                 with get_db() as conn:
                     new_id = insert_get_id(
                         conn,
-                        'INSERT INTO fixed_expenses (name, amount, type, effective_ym) VALUES (?,?,?,?)',
-                        (name, amount, type_, start_ym)
+                        'INSERT INTO fixed_expenses (name, amount, type, effective_ym, user_id) VALUES (?,?,?,?,?)',
+                        (name, amount, type_, start_ym, uid)
                     )
                     conn.execute('UPDATE fixed_expenses SET item_id=? WHERE id=?', (new_id, new_id))
                     if one_time:
                         end_ym = add_months(date.fromisoformat(start_ym + '-01'), 1).strftime('%Y-%m')
                         conn.execute(
-                            'INSERT INTO fixed_expenses (item_id, name, amount, type, effective_ym, active) VALUES (?,?,0,?,?,1)',
-                            (new_id, name, type_, end_ym)
+                            'INSERT INTO fixed_expenses (item_id, name, amount, type, effective_ym, active, user_id) VALUES (?,?,0,?,?,1,?)',
+                            (new_id, name, type_, end_ym, uid)
                         )
                 label = f'{fmt_ym(start_ym)}のみ' if one_time else f'{fmt_ym(start_ym)}から有効'
                 flash(f'固定費「{name}」を追加しました（{label}）')
@@ -513,12 +536,12 @@ def settings():
             new_type = request.form.get('type')
             with get_db() as conn:
                 cur_row = conn.execute(
-                    'SELECT * FROM fixed_expenses WHERE item_id=? AND active=1 AND effective_ym<=? '
-                    'ORDER BY effective_ym DESC LIMIT 1', (item_id, today_ym)
+                    'SELECT * FROM fixed_expenses WHERE item_id=? AND user_id=? AND active=1 AND effective_ym<=? '
+                    'ORDER BY effective_ym DESC LIMIT 1', (item_id, uid, today_ym)
                 ).fetchone()
                 if cur_row:
                     upsert_next_version(conn, item_id, next_ym,
-                                        cur_row['name'], cur_row['amount'], new_type)
+                                        cur_row['name'], cur_row['amount'], new_type, uid)
             flash(f'翌月({fmt_ym(next_ym)})から「{new_type}」に変更します')
 
         elif action == 'edit_fixed':
@@ -529,12 +552,12 @@ def settings():
             if name:
                 with get_db() as conn:
                     cur_row = conn.execute(
-                        'SELECT * FROM fixed_expenses WHERE item_id=? AND active=1 AND effective_ym<=? '
-                        'ORDER BY effective_ym DESC LIMIT 1', (item_id, today_ym)
+                        'SELECT * FROM fixed_expenses WHERE item_id=? AND user_id=? AND active=1 AND effective_ym<=? '
+                        'ORDER BY effective_ym DESC LIMIT 1', (item_id, uid, today_ym)
                     ).fetchone()
                     if cur_row:
                         upsert_next_version(conn, item_id, target_ym,
-                                            name, amount, cur_row['type'])
+                                            name, amount, cur_row['type'], uid)
                 if amount == 0:
                     flash(f'{fmt_ym(target_ym)}から「{name}」を0円（無効）に変更します')
                 else:
@@ -543,7 +566,7 @@ def settings():
         elif action == 'delete_fixed':
             item_id = request.form.get('item_id')
             with get_db() as conn:
-                conn.execute('UPDATE fixed_expenses SET active=0 WHERE item_id=?', (item_id,))
+                conn.execute('UPDATE fixed_expenses SET active=0 WHERE item_id=? AND user_id=?', (item_id, uid))
             flash('固定費を削除しました')
 
         elif action == 'add_card':
@@ -558,8 +581,8 @@ def settings():
             if name:
                 with get_db() as conn:
                     conn.execute(
-                        'INSERT INTO credit_cards (name, closing_day, fixed_months) VALUES (?,?,?)',
-                        (name, closing_day, fixed_months)
+                        'INSERT INTO credit_cards (name, closing_day, fixed_months, user_id) VALUES (?,?,?,?)',
+                        (name, closing_day, fixed_months, uid)
                     )
                 if fixed_months:
                     flash(f'カード「{name}」を追加しました（使用日の{fixed_months}か月後引き落とし）')
@@ -569,27 +592,27 @@ def settings():
         elif action == 'delete_card':
             cid = request.form.get('id')
             with get_db() as conn:
-                conn.execute('DELETE FROM credit_cards WHERE id=?', (cid,))
+                conn.execute('DELETE FROM credit_cards WHERE id=? AND user_id=?', (cid, uid))
             flash('カードを削除しました')
 
         return redirect(url_for('settings'))
 
     with get_db() as conn:
-        salary_row = conn.execute('SELECT credit_limit FROM salary').fetchone()
-        credit_limit = salary_row['credit_limit'] if salary_row else 0
+        user_row = conn.execute('SELECT credit_limit FROM users WHERE id=?', (uid,)).fetchone()
+        credit_limit = user_row['credit_limit'] if user_row else 0
 
         monthly_salaries = conn.execute(
-            'SELECT ym, amount FROM monthly_salary ORDER BY ym DESC LIMIT 12'
+            'SELECT ym, amount FROM monthly_salary WHERE user_id=? ORDER BY ym DESC LIMIT 12', (uid,)
         ).fetchall()
 
-        fixed = get_fixed_for_ym(conn, today_ym)
+        fixed = get_fixed_for_ym(conn, today_ym, uid)
 
         pending_rows = conn.execute(
-            'SELECT * FROM fixed_expenses WHERE effective_ym=? AND active=1', (next_ym,)
+            'SELECT * FROM fixed_expenses WHERE effective_ym=? AND active=1 AND user_id=?', (next_ym, uid)
         ).fetchall()
         pending = {row['item_id']: row for row in pending_rows}
 
-        cards = conn.execute('SELECT * FROM credit_cards ORDER BY id').fetchall()
+        cards = conn.execute('SELECT * FROM credit_cards WHERE user_id=? ORDER BY id', (uid,)).fetchall()
 
     base = date.today().replace(day=1)
     next_ym_list = [add_months(base, i).strftime('%Y-%m') for i in range(1, 13)]
@@ -606,6 +629,8 @@ def settings():
 @app.route('/expense', methods=['GET', 'POST'])
 @login_required
 def expense():
+    uid = current_user.id
+
     if request.method == 'POST':
         action = request.form.get('action')
 
@@ -622,9 +647,9 @@ def expense():
                 with get_db() as conn:
                     conn.execute(
                         '''INSERT INTO variable_expenses
-                           (expense_date, amount, category, note, payment_type, card_id, billing_ym)
-                           VALUES (?,?,?,?,?,?,?)''',
-                        (expense_date, amount, category, note, payment_type, card_id, billing_ym)
+                           (expense_date, amount, category, note, payment_type, card_id, billing_ym, user_id)
+                           VALUES (?,?,?,?,?,?,?,?)''',
+                        (expense_date, amount, category, note, payment_type, card_id, billing_ym, uid)
                     )
                 flash(f'追加しました（引き落とし: {fmt_ym(billing_ym)}）')
             else:
@@ -633,19 +658,21 @@ def expense():
         elif action == 'delete':
             eid = request.form.get('id')
             with get_db() as conn:
-                conn.execute('DELETE FROM variable_expenses WHERE id=?', (eid,))
+                conn.execute('DELETE FROM variable_expenses WHERE id=? AND user_id=?', (eid, uid))
             flash('削除しました')
 
         return redirect(url_for('expense'))
 
     with get_db() as conn:
-        cards = conn.execute('SELECT * FROM credit_cards ORDER BY id').fetchall()
+        cards = conn.execute('SELECT * FROM credit_cards WHERE user_id=? ORDER BY id', (uid,)).fetchall()
         expenses = conn.execute(
             '''SELECT e.*, c.name as card_name
                FROM variable_expenses e
                LEFT JOIN credit_cards c ON e.card_id = c.id
+               WHERE e.user_id = ?
                ORDER BY e.expense_date DESC
                LIMIT 60''',
+            (uid,)
         ).fetchall()
 
     return render_template('expense.html',
@@ -658,6 +685,8 @@ def expense():
 @app.route('/expense/<int:eid>/edit', methods=['GET', 'POST'])
 @login_required
 def expense_edit(eid):
+    uid = current_user.id
+
     if request.method == 'POST':
         expense_date = request.form.get('expense_date') or date.today().isoformat()
         amount = int(request.form.get('amount', 0) or 0)
@@ -672,9 +701,9 @@ def expense_edit(eid):
                     '''UPDATE variable_expenses
                        SET expense_date=?, amount=?, category=?, note=?,
                            payment_type=?, card_id=?, billing_ym=?
-                       WHERE id=?''',
+                       WHERE id=? AND user_id=?''',
                     (expense_date, amount, category, note,
-                     payment_type, card_id, billing_ym, eid)
+                     payment_type, card_id, billing_ym, eid, uid)
                 )
             flash(f'更新しました（引き落とし: {fmt_ym(billing_ym)}）')
             return redirect(url_for('expense'))
@@ -682,8 +711,8 @@ def expense_edit(eid):
             flash('金額を入力してください')
 
     with get_db() as conn:
-        e = conn.execute('SELECT * FROM variable_expenses WHERE id=?', (eid,)).fetchone()
-        cards = conn.execute('SELECT * FROM credit_cards ORDER BY id').fetchall()
+        e = conn.execute('SELECT * FROM variable_expenses WHERE id=? AND user_id=?', (eid, uid)).fetchone()
+        cards = conn.execute('SELECT * FROM credit_cards WHERE user_id=? ORDER BY id', (uid,)).fetchall()
     if not e:
         return redirect(url_for('expense'))
 
@@ -696,6 +725,8 @@ def expense_edit(eid):
 @app.route('/income', methods=['GET', 'POST'])
 @login_required
 def income():
+    uid = current_user.id
+
     if request.method == 'POST':
         action = request.form.get('action')
         if action == 'add':
@@ -706,8 +737,8 @@ def income():
             if amount > 0:
                 with get_db() as conn:
                     conn.execute(
-                        'INSERT INTO extra_income (income_date, amount, note, ym) VALUES (?,?,?,?)',
-                        (income_date, amount, note, ym)
+                        'INSERT INTO extra_income (income_date, amount, note, ym, user_id) VALUES (?,?,?,?,?)',
+                        (income_date, amount, note, ym, uid)
                     )
                 flash(f'臨時収入を追加しました（{fmt_ym(ym)}）')
             else:
@@ -715,13 +746,13 @@ def income():
         elif action == 'delete':
             iid = request.form.get('id')
             with get_db() as conn:
-                conn.execute('DELETE FROM extra_income WHERE id=?', (iid,))
+                conn.execute('DELETE FROM extra_income WHERE id=? AND user_id=?', (iid, uid))
             flash('削除しました')
         return redirect(url_for('income'))
 
     with get_db() as conn:
         incomes = conn.execute(
-            'SELECT * FROM extra_income ORDER BY income_date DESC LIMIT 60'
+            'SELECT * FROM extra_income WHERE user_id=? ORDER BY income_date DESC LIMIT 60', (uid,)
         ).fetchall()
 
     return render_template('income.html',
