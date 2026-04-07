@@ -347,7 +347,6 @@ def upsert_next_version(conn, item_id, next_ym, name, amount, type_, user_id, ca
 # ── App Routes ─────────────────────────────────────────────────────────────
 
 @app.route('/')
-
 def index():
     uid = SINGLE_USER_ID
     ym = request.args.get('ym', date.today().strftime('%Y-%m'))
@@ -443,7 +442,6 @@ def index():
 
 
 @app.route('/settings', methods=['GET', 'POST'])
-
 def settings():
     uid = SINGLE_USER_ID
     today_ym = date.today().strftime('%Y-%m')
@@ -592,7 +590,6 @@ def settings():
 
 
 @app.route('/expense', methods=['GET', 'POST'])
-
 def expense():
     uid = SINGLE_USER_ID
 
@@ -648,7 +645,6 @@ def expense():
 
 
 @app.route('/expense/<int:eid>/edit', methods=['GET', 'POST'])
-
 def expense_edit(eid):
     uid = SINGLE_USER_ID
 
@@ -688,7 +684,6 @@ def expense_edit(eid):
 
 
 @app.route('/income', methods=['GET', 'POST'])
-
 def income():
     uid = SINGLE_USER_ID
 
