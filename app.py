@@ -406,6 +406,30 @@ def index():
                 if exp_date.strftime('%Y-%m') == today_ym_str:
                     card_used_this_month += r['amount']
 
+        # 固定費のクレカ払い分も加算（毎月発生するため当月有効分を全額計上）
+        fixed_card_rows = conn.execute(
+            '''SELECT f.amount, f.card_id
+               FROM fixed_expenses f
+               LEFT JOIN credit_cards c ON f.card_id = c.id
+               WHERE f.active = 1
+                 AND f.amount > 0
+                 AND f.user_id = ?
+                 AND f.card_id IS NOT NULL
+                 AND (c.fixed_months IS NULL OR c.fixed_months = 0)
+                 AND f.effective_ym <= ?
+                 AND f.effective_ym = (
+                     SELECT MAX(f2.effective_ym)
+                     FROM fixed_expenses f2
+                     WHERE f2.item_id = f.item_id
+                       AND f2.user_id = ?
+                       AND f2.active = 1
+                       AND f2.effective_ym <= ?
+                 )''',
+            (uid, today_ym_str, uid, today_ym_str)
+        ).fetchall()
+        for r in fixed_card_rows:
+            card_used_this_month += r['amount']
+
 
         extra_incomes = conn.execute(
             'SELECT * FROM extra_income WHERE ym=? AND user_id=? ORDER BY income_date DESC', (ym, uid)
