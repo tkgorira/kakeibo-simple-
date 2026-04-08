@@ -406,9 +406,6 @@ def index():
                 if exp_date.strftime('%Y-%m') == today_ym_str:
                     card_used_this_month += r['amount']
 
-        # カード払い固定費（今月分）をアラートに加算
-        fixed_for_today = fixed if ym == today_ym_str else get_fixed_for_ym(conn, today_ym_str, uid)
-        card_used_this_month += sum(f['amount'] for f in fixed_for_today if f['card_id'])
 
         extra_incomes = conn.execute(
             'SELECT * FROM extra_income WHERE ym=? AND user_id=? ORDER BY income_date DESC', (ym, uid)
