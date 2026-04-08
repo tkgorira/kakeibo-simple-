@@ -430,6 +430,21 @@ def index():
         for r in fixed_card_rows:
             card_used_this_month += r['amount']
 
+        # ETCカード（fixed_months > 0）: 来月請求分をアラートに含める
+        next_month_ym = add_months(today_date, 1).strftime('%Y-%m')
+        etc_alert_rows = conn.execute(
+            '''SELECT e.amount
+               FROM variable_expenses e
+               LEFT JOIN credit_cards c ON e.card_id = c.id
+               WHERE e.payment_type = 'card'
+                 AND e.user_id = ?
+                 AND c.fixed_months > 0
+                 AND e.billing_ym = ?''',
+            (uid, next_month_ym)
+        ).fetchall()
+        for r in etc_alert_rows:
+            card_used_this_month += r['amount']
+
 
         extra_incomes = conn.execute(
             'SELECT * FROM extra_income WHERE ym=? AND user_id=? ORDER BY income_date DESC', (ym, uid)
