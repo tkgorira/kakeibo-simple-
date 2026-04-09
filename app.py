@@ -166,6 +166,13 @@ def init_db():
             amount INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (ym, user_id)
         )''',
+        '''CREATE TABLE IF NOT EXISTS transfer_adjustments (
+            ym TEXT NOT NULL,
+            card_id INTEGER NOT NULL,
+            amount INTEGER NOT NULL,
+            user_id INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (ym, card_id, user_id)
+        )''',
     ]
 
     with get_db() as conn:
@@ -347,9 +354,35 @@ def upsert_next_version(conn, item_id, next_ym, name, amount, type_, user_id, ca
 
 # ── App Routes ─────────────────────────────────────────────────────────────
 
-@app.route('/')
+@app.route('/', methods=['GET', 'POST'])
 def index():
     uid = SINGLE_USER_ID
+
+    if request.method == 'POST':
+        action = request.form.get('action')
+        if action == 'save_transfer':
+            ym_form = request.form.get('ym')
+            with get_db() as conn:
+                for key, val in request.form.items():
+                    if key.startswith('card_amount_'):
+                        cid = int(key.replace('card_amount_', ''))
+                        amount = int(val or 0)
+                        if IS_PG:
+                            conn.execute(
+                                '''INSERT INTO transfer_adjustments (ym, card_id, amount, user_id)
+                                   VALUES (%s,%s,%s,%s)
+                                   ON CONFLICT (ym, card_id, user_id) DO UPDATE SET amount=EXCLUDED.amount''',
+                                (ym_form, cid, amount, uid)
+                            )
+                        else:
+                            conn.execute(
+                                'INSERT OR REPLACE INTO transfer_adjustments (ym, card_id, amount, user_id) VALUES (?,?,?,?)',
+                                (ym_form, cid, amount, uid)
+                            )
+            flash('移動額を保存しました')
+            return redirect(url_for('index', ym=ym_form))
+        return redirect(url_for('index'))
+
     ym = request.args.get('ym', date.today().strftime('%Y-%m'))
     year, month = map(int, ym.split('-'))
 
@@ -379,11 +412,40 @@ def index():
                         if e['payment_type'] == 'card' and e['card_fixed_months'])
         fixed_card_total = sum(f['amount'] for f in fixed if f['card_id'])
         withdrawal_total = sum(f['amount'] for f in fixed if f['withdrawal'])
-        transfer_total = credit_total + etc_total + fixed_card_total + withdrawal_total
 
         # アラート用: 各カードの締め日に基づいた当期使用額
         today_date = date.today()
         cards_all = conn.execute('SELECT * FROM credit_cards WHERE user_id=?', (uid,)).fetchall()
+
+        # カード別移動額集計
+        card_var_by_id = {}
+        for e in expenses:
+            if e['payment_type'] == 'card':
+                cid = e['card_id']
+                card_var_by_id[cid] = card_var_by_id.get(cid, 0) + e['amount']
+        card_fix_by_id = {}
+        for f in fixed:
+            if f['card_id']:
+                card_fix_by_id[f['card_id']] = card_fix_by_id.get(f['card_id'], 0) + f['amount']
+        adj_rows = conn.execute(
+            'SELECT card_id, amount FROM transfer_adjustments WHERE ym=? AND user_id=?', (ym, uid)
+        ).fetchall()
+        adjustments = {r['card_id']: r['amount'] for r in adj_rows}
+        seen_cids = set(card_var_by_id) | set(card_fix_by_id) | set(adjustments)
+        card_transfer = []
+        for card in cards_all:
+            cid = card['id']
+            if cid in seen_cids:
+                calc = card_var_by_id.get(cid, 0) + card_fix_by_id.get(cid, 0)
+                adj = adjustments.get(cid)
+                card_transfer.append({
+                    'id': cid,
+                    'name': card['name'],
+                    'calculated': calc,
+                    'adjusted': adj,
+                    'display': adj if adj is not None else calc,
+                })
+        transfer_total = sum(c['display'] for c in card_transfer) + withdrawal_total
         card_period_starts = {
             card['id']: get_card_period_start(today_date, card['closing_day'])
             for card in cards_all if not card['fixed_months']
@@ -474,7 +536,7 @@ def index():
         expenses=expenses, variable_total=variable_total,
         cash_total=cash_total, credit_total=credit_total, etc_total=etc_total,
         fixed_card_total=fixed_card_total, withdrawal_total=withdrawal_total,
-        transfer_total=transfer_total,
+        card_transfer=card_transfer, transfer_total=transfer_total,
         credit_limit=credit_limit,
         card_used_this_month=card_used_this_month,
         extra_incomes=extra_incomes, extra_total=extra_total,

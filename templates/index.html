@@ -102,39 +102,43 @@
 {% endif %}
 
 <!-- 引き落とし口座 移動額 -->
-{% if transfer_total > 0 %}
+{% if card_transfer or withdrawal_total > 0 %}
 <div class="section-title">💸 引き落とし口座 移動額（月初目安）</div>
-<div class="card" style="margin-bottom:8px; border-left:4px solid #e67e22;">
-  {% if credit_total > 0 %}
-  <div class="fixed-row">
-    <span>💳 変動費クレカ</span>
-    <span class="amt">-{{ credit_total | fmt_money }}</span>
+<form method="POST" action="/">
+  <input type="hidden" name="action" value="save_transfer">
+  <input type="hidden" name="ym" value="{{ ym }}">
+  <div class="card" style="margin-bottom:8px; border-left:4px solid #e67e22;">
+    {% for c in card_transfer %}
+    <div class="fixed-row" style="align-items:center; gap:8px;">
+      <div style="flex:1;">
+        <span>💳 {{ c.name }}</span>
+        {% if c.adjusted is not none and c.adjusted != c.calculated %}
+        <div style="font-size:0.75em; color:#aaa;">計算値: {{ c.calculated | fmt_money }}</div>
+        {% endif %}
+      </div>
+      <div style="display:flex; align-items:center; gap:4px;">
+        <span style="color:#e74c3c;">-¥</span>
+        <input type="number" name="card_amount_{{ c.id }}" value="{{ c.display }}"
+               class="transfer-input" inputmode="numeric" min="0"
+               style="width:110px; text-align:right; padding:4px 6px; border:1px solid #ddd; border-radius:6px; font-size:0.95rem;"
+               oninput="updateTransferTotal()">
+      </div>
+    </div>
+    {% endfor %}
+    {% if withdrawal_total > 0 %}
+    <div class="fixed-row">
+      <span>💴 現金引き出し（柔術費等）</span>
+      <span class="amt">-{{ withdrawal_total | fmt_money }}</span>
+    </div>
+    {% endif %}
+    <div class="fixed-row" style="font-weight:700; border-top:1px solid #eee; margin-top:6px; padding-top:6px;">
+      <span>移動額合計</span>
+      <span class="amt" id="transfer-total" style="color:#e67e22;">-{{ transfer_total | fmt_money }}</span>
+    </div>
+    <div style="font-size:0.78em; color:#888; margin-top:4px;">※ 誤差がある場合は金額を修正して保存</div>
+    <button type="submit" class="btn btn-primary btn-block" style="margin-top:10px; font-size:0.9rem;">💾 移動額を保存</button>
   </div>
-  {% endif %}
-  {% if etc_total > 0 %}
-  <div class="fixed-row">
-    <span>🛣 変動費ETC</span>
-    <span class="amt">-{{ etc_total | fmt_money }}</span>
-  </div>
-  {% endif %}
-  {% if fixed_card_total > 0 %}
-  <div class="fixed-row">
-    <span>💳 固定費クレカ</span>
-    <span class="amt">-{{ fixed_card_total | fmt_money }}</span>
-  </div>
-  {% endif %}
-  {% if withdrawal_total > 0 %}
-  <div class="fixed-row">
-    <span>💴 現金引き出し（柔術費等）</span>
-    <span class="amt">-{{ withdrawal_total | fmt_money }}</span>
-  </div>
-  {% endif %}
-  <div class="fixed-row" style="font-weight:700; border-top:1px solid #eee; margin-top:4px; padding-top:4px;">
-    <span>移動額合計</span>
-    <span class="amt" style="color:#e67e22;">-{{ transfer_total | fmt_money }}</span>
-  </div>
-  <div style="font-size:0.78em; color:#888; margin-top:4px;">※ クレカ引き落とし＋現金引き出し対象の合計</div>
-</div>
+</form>
 {% endif %}
 
 {% if expenses %}
@@ -164,4 +168,18 @@
   <a href="/income" class="btn btn-success btn-block">＋ 臨時収入</a>
 </div>
 
+{% endblock %}
+
+{% block scripts %}
+<script>
+function updateTransferTotal() {
+  var inputs = document.querySelectorAll('.transfer-input');
+  var total = {{ withdrawal_total }};
+  inputs.forEach(function(inp) {
+    total += parseInt(inp.value || 0, 10);
+  });
+  var el = document.getElementById('transfer-total');
+  if (el) el.textContent = '-¥' + total.toLocaleString();
+}
+</script>
 {% endblock %}
