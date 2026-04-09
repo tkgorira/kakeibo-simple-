@@ -200,6 +200,7 @@ def init_db():
         add_col('salary', 'credit_limit', 'INTEGER DEFAULT 0')
         add_col('credit_cards', 'fixed_months', 'INTEGER DEFAULT 0')
         add_col('fixed_expenses', 'card_id', 'INTEGER')
+        add_col('fixed_expenses', 'withdrawal', 'INTEGER DEFAULT 0')
 
         # monthly_salary: 古い (ym TEXT PRIMARY KEY) スキーマを複合PKに移行
         if not _has_column(conn, 'monthly_salary', 'user_id'):
@@ -327,20 +328,20 @@ def calc_balance_for_ym(conn, ym, user_id):
     return salary + extra_total - fixed_total - variable_total
 
 
-def upsert_next_version(conn, item_id, next_ym, name, amount, type_, user_id, card_id=None):
+def upsert_next_version(conn, item_id, next_ym, name, amount, type_, user_id, card_id=None, withdrawal=0):
     existing = conn.execute(
         'SELECT id FROM fixed_expenses WHERE item_id=? AND effective_ym=? AND active=1 AND user_id=?',
         (item_id, next_ym, user_id)
     ).fetchone()
     if existing:
         conn.execute(
-            'UPDATE fixed_expenses SET name=?, amount=?, type=?, card_id=? WHERE id=?',
-            (name, amount, type_, card_id, existing['id'])
+            'UPDATE fixed_expenses SET name=?, amount=?, type=?, card_id=?, withdrawal=? WHERE id=?',
+            (name, amount, type_, card_id, withdrawal, existing['id'])
         )
     else:
         conn.execute(
-            'INSERT INTO fixed_expenses (item_id, name, amount, type, effective_ym, active, user_id, card_id) VALUES (?,?,?,?,?,1,?,?)',
-            (item_id, name, amount, type_, next_ym, user_id, card_id)
+            'INSERT INTO fixed_expenses (item_id, name, amount, type, effective_ym, active, user_id, card_id, withdrawal) VALUES (?,?,?,?,?,1,?,?,?)',
+            (item_id, name, amount, type_, next_ym, user_id, card_id, withdrawal)
         )
 
 
@@ -376,6 +377,9 @@ def index():
                            if e['payment_type'] == 'card' and not e['card_fixed_months'])
         etc_total = sum(e['amount'] for e in expenses
                         if e['payment_type'] == 'card' and e['card_fixed_months'])
+        fixed_card_total = sum(f['amount'] for f in fixed if f['card_id'])
+        withdrawal_total = sum(f['amount'] for f in fixed if f['withdrawal'])
+        transfer_total = credit_total + etc_total + fixed_card_total + withdrawal_total
 
         # アラート用: 各カードの締め日に基づいた当期使用額
         today_date = date.today()
@@ -469,6 +473,8 @@ def index():
         fixed=fixed, fixed_total=fixed_total,
         expenses=expenses, variable_total=variable_total,
         cash_total=cash_total, credit_total=credit_total, etc_total=etc_total,
+        fixed_card_total=fixed_card_total, withdrawal_total=withdrawal_total,
+        transfer_total=transfer_total,
         credit_limit=credit_limit,
         card_used_this_month=card_used_this_month,
         extra_incomes=extra_incomes, extra_total=extra_total,
@@ -510,25 +516,26 @@ def settings():
             flash('クレカ上限額を更新しました')
 
         elif action == 'add_fixed':
-            name     = request.form.get('name', '').strip()
-            amount   = int(request.form.get('amount', 0) or 0)
-            type_    = request.form.get('type', '固定')
-            start_ym = request.form.get('start_ym', today_ym)
-            one_time = request.form.get('one_time') == '1'
-            card_id  = request.form.get('card_id') or None
+            name       = request.form.get('name', '').strip()
+            amount     = int(request.form.get('amount', 0) or 0)
+            type_      = request.form.get('type', '固定')
+            start_ym   = request.form.get('start_ym', today_ym)
+            one_time   = request.form.get('one_time') == '1'
+            card_id    = request.form.get('card_id') or None
+            withdrawal = 1 if request.form.get('withdrawal') == '1' else 0
             if name and amount > 0:
                 with get_db() as conn:
                     new_id = insert_get_id(
                         conn,
-                        'INSERT INTO fixed_expenses (name, amount, type, effective_ym, user_id, card_id) VALUES (?,?,?,?,?,?)',
-                        (name, amount, type_, start_ym, uid, card_id)
+                        'INSERT INTO fixed_expenses (name, amount, type, effective_ym, user_id, card_id, withdrawal) VALUES (?,?,?,?,?,?,?)',
+                        (name, amount, type_, start_ym, uid, card_id, withdrawal)
                     )
                     conn.execute('UPDATE fixed_expenses SET item_id=? WHERE id=?', (new_id, new_id))
                     if one_time:
                         end_ym = add_months(date.fromisoformat(start_ym + '-01'), 1).strftime('%Y-%m')
                         conn.execute(
-                            'INSERT INTO fixed_expenses (item_id, name, amount, type, effective_ym, active, user_id, card_id) VALUES (?,?,0,?,?,1,?,?)',
-                            (new_id, name, type_, end_ym, uid, card_id)
+                            'INSERT INTO fixed_expenses (item_id, name, amount, type, effective_ym, active, user_id, card_id, withdrawal) VALUES (?,?,0,?,?,1,?,?,?)',
+                            (new_id, name, type_, end_ym, uid, card_id, withdrawal)
                         )
                 label = f'{fmt_ym(start_ym)}のみ' if one_time else f'{fmt_ym(start_ym)}から有効'
                 flash(f'固定費「{name}」を追加しました（{label}）')
@@ -544,15 +551,16 @@ def settings():
                 if cur_row:
                     upsert_next_version(conn, item_id, next_ym,
                                         cur_row['name'], cur_row['amount'], new_type, uid,
-                                        cur_row['card_id'])
+                                        cur_row['card_id'], cur_row['withdrawal'] or 0)
             flash(f'翌月({fmt_ym(next_ym)})から「{new_type}」に変更します')
 
         elif action == 'edit_fixed':
-            item_id   = int(request.form.get('item_id'))
-            name      = request.form.get('name', '').strip()
-            amount    = int(request.form.get('amount', 0) or 0)
-            target_ym = request.form.get('target_ym', next_ym)
-            card_id   = request.form.get('card_id') or None
+            item_id    = int(request.form.get('item_id'))
+            name       = request.form.get('name', '').strip()
+            amount     = int(request.form.get('amount', 0) or 0)
+            target_ym  = request.form.get('target_ym', next_ym)
+            card_id    = request.form.get('card_id') or None
+            withdrawal = 1 if request.form.get('withdrawal') == '1' else 0
             if name:
                 with get_db() as conn:
                     cur_row = conn.execute(
@@ -561,7 +569,7 @@ def settings():
                     ).fetchone()
                     if cur_row:
                         upsert_next_version(conn, item_id, target_ym,
-                                            name, amount, cur_row['type'], uid, card_id)
+                                            name, amount, cur_row['type'], uid, card_id, withdrawal)
                 if amount == 0:
                     flash(f'{fmt_ym(target_ym)}から「{name}」を0円（無効）に変更します')
                 else:

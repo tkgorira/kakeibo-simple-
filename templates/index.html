@@ -101,6 +101,42 @@
 </div>
 {% endif %}
 
+<!-- 引き落とし口座 移動額 -->
+{% if transfer_total > 0 %}
+<div class="section-title">💸 引き落とし口座 移動額（月初目安）</div>
+<div class="card" style="margin-bottom:8px; border-left:4px solid #e67e22;">
+  {% if credit_total > 0 %}
+  <div class="fixed-row">
+    <span>💳 変動費クレカ</span>
+    <span class="amt">-{{ credit_total | fmt_money }}</span>
+  </div>
+  {% endif %}
+  {% if etc_total > 0 %}
+  <div class="fixed-row">
+    <span>🛣 変動費ETC</span>
+    <span class="amt">-{{ etc_total | fmt_money }}</span>
+  </div>
+  {% endif %}
+  {% if fixed_card_total > 0 %}
+  <div class="fixed-row">
+    <span>💳 固定費クレカ</span>
+    <span class="amt">-{{ fixed_card_total | fmt_money }}</span>
+  </div>
+  {% endif %}
+  {% if withdrawal_total > 0 %}
+  <div class="fixed-row">
+    <span>💴 現金引き出し（柔術費等）</span>
+    <span class="amt">-{{ withdrawal_total | fmt_money }}</span>
+  </div>
+  {% endif %}
+  <div class="fixed-row" style="font-weight:700; border-top:1px solid #eee; margin-top:4px; padding-top:4px;">
+    <span>移動額合計</span>
+    <span class="amt" style="color:#e67e22;">-{{ transfer_total | fmt_money }}</span>
+  </div>
+  <div style="font-size:0.78em; color:#888; margin-top:4px;">※ クレカ引き落とし＋現金引き出し対象の合計</div>
+</div>
+{% endif %}
+
 {% if expenses %}
   {% for e in expenses %}
   <div class="exp-item">
