@@ -446,12 +446,15 @@ def index():
                     'display': adj if adj is not None else calc,
                 })
         transfer_total = sum(c['display'] for c in card_transfer) + withdrawal_total
-        card_period_starts = {
-            card['id']: get_card_period_start(today_date, card['closing_day'])
+        today_ym_str = today_date.strftime('%Y-%m')
+        # 各カードの「現在の請求期間」に対応する billing_ym を計算
+        # 締め日前: +1ヶ月、締め日後: +2ヶ月 → 締め日超過でリセット
+        card_current_billing_ym = {
+            card['id']: add_months(today_date, 1 if today_date.day <= card['closing_day'] else 2).strftime('%Y-%m')
             for card in cards_all if not card['fixed_months']
         }
         alert_rows = conn.execute(
-            '''SELECT e.amount, e.card_id, e.expense_date, c.fixed_months as card_fixed_months
+            '''SELECT e.amount, e.card_id, e.billing_ym
                FROM variable_expenses e
                LEFT JOIN credit_cards c ON e.card_id = c.id
                WHERE e.payment_type = 'card'
@@ -460,16 +463,14 @@ def index():
             (uid,)
         ).fetchall()
         card_used_this_month = 0
-        today_ym_str = today_date.strftime('%Y-%m')
         for r in alert_rows:
             cid = r['card_id']
-            exp_date = date.fromisoformat(r['expense_date'])
-            if cid in card_period_starts:
-                if exp_date >= card_period_starts[cid]:
+            if cid in card_current_billing_ym:
+                if r['billing_ym'] == card_current_billing_ym[cid]:
                     card_used_this_month += r['amount']
             else:
-                # カード未選択の場合は今月のexpense_dateで判定
-                if exp_date.strftime('%Y-%m') == today_ym_str:
+                # カード未選択の場合は今月のbilling_ymで判定
+                if r['billing_ym'] == today_ym_str:
                     card_used_this_month += r['amount']
 
         # 固定費のクレカ払い分も加算（毎月発生するため当月有効分を全額計上）
