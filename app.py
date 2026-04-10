@@ -473,44 +473,21 @@ def index():
                 if r['billing_ym'] == today_ym_str:
                     card_used_this_month += r['amount']
 
-        # 固定費のクレカ払い分も加算（毎月発生するため当月有効分を全額計上）
-        fixed_card_rows = conn.execute(
-            '''SELECT f.amount, f.card_id
-               FROM fixed_expenses f
-               LEFT JOIN credit_cards c ON f.card_id = c.id
-               WHERE f.active = 1
-                 AND f.amount > 0
-                 AND f.user_id = ?
-                 AND f.card_id IS NOT NULL
-                 AND (c.fixed_months IS NULL OR c.fixed_months = 0)
-                 AND f.effective_ym <= ?
-                 AND f.effective_ym = (
-                     SELECT MAX(f2.effective_ym)
-                     FROM fixed_expenses f2
-                     WHERE f2.item_id = f.item_id
-                       AND f2.user_id = ?
-                       AND f2.active = 1
-                       AND f2.effective_ym <= ?
-                 )''',
-            (uid, today_ym_str, uid, today_ym_str)
-        ).fetchall()
-        for r in fixed_card_rows:
-            card_used_this_month += r['amount']
-
-        # ETCカード（fixed_months > 0）: 来月請求分をアラートに含める
-        next_month_ym = add_months(today_date, 1).strftime('%Y-%m')
-        etc_alert_rows = conn.execute(
-            '''SELECT e.amount
-               FROM variable_expenses e
-               LEFT JOIN credit_cards c ON e.card_id = c.id
-               WHERE e.payment_type = 'card'
-                 AND e.user_id = ?
-                 AND c.fixed_months > 0
-                 AND e.billing_ym = ?''',
-            (uid, next_month_ym)
-        ).fetchall()
-        for r in etc_alert_rows:
-            card_used_this_month += r['amount']
+        # ETCカード（fixed_months > 0）: 当該カードの請求期間に合わせた billing_ym で集計
+        for card in cards_all:
+            if card['fixed_months']:
+                etc_billing_ym = add_months(today_date, card['fixed_months']).strftime('%Y-%m')
+                etc_rows = conn.execute(
+                    '''SELECT e.amount
+                       FROM variable_expenses e
+                       WHERE e.payment_type = 'card'
+                         AND e.user_id = ?
+                         AND e.card_id = ?
+                         AND e.billing_ym = ?''',
+                    (uid, card['id'], etc_billing_ym)
+                ).fetchall()
+                for r in etc_rows:
+                    card_used_this_month += r['amount']
 
 
         extra_incomes = conn.execute(
