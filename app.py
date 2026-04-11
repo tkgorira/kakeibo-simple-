@@ -477,6 +477,10 @@ def index():
                 for r in etc_rows:
                     card_used_this_month += r['amount']
 
+        # 固定費のクレカ払いも今月分をアラートに追加
+        fixed_today = get_fixed_for_ym(conn, today_ym_str, uid)
+        card_used_this_month += sum(f['amount'] for f in fixed_today if f['card_id'])
+
 
         extra_incomes = conn.execute(
             'SELECT * FROM extra_income WHERE ym=? AND user_id=? ORDER BY income_date DESC', (ym, uid)
