@@ -447,31 +447,19 @@ def index():
                 })
         transfer_total = sum(c['display'] for c in card_transfer) + withdrawal_total
         today_ym_str = today_date.strftime('%Y-%m')
-        # 各カードの「現在の請求期間」に対応する billing_ym を計算
-        # 締め日前: +1ヶ月、締め日後: +2ヶ月 → 締め日超過でリセット
-        card_current_billing_ym = {
-            card['id']: add_months(today_date, 1 if today_date.day <= card['closing_day'] else 2).strftime('%Y-%m')
-            for card in cards_all if not card['fixed_months']
-        }
+        # アラート用変動費: expense_date が今月のカード払いを集計
+        # billing_ym（締め日ベース）ではなく支出した月で判定することで締め日リセットを防ぐ
         alert_rows = conn.execute(
-            '''SELECT e.amount, e.card_id, e.billing_ym
+            '''SELECT e.amount
                FROM variable_expenses e
                LEFT JOIN credit_cards c ON e.card_id = c.id
                WHERE e.payment_type = 'card'
                  AND e.user_id = ?
-                 AND (c.fixed_months IS NULL OR c.fixed_months = 0)''',
-            (uid,)
+                 AND (c.fixed_months IS NULL OR c.fixed_months = 0)
+                 AND strftime('%Y-%m', e.expense_date) = ?''',
+            (uid, today_ym_str)
         ).fetchall()
-        card_used_this_month = 0
-        for r in alert_rows:
-            cid = r['card_id']
-            if cid in card_current_billing_ym:
-                if r['billing_ym'] == card_current_billing_ym[cid]:
-                    card_used_this_month += r['amount']
-            else:
-                # カード未選択の場合は今月のbilling_ymで判定
-                if r['billing_ym'] == today_ym_str:
-                    card_used_this_month += r['amount']
+        card_used_this_month = sum(r['amount'] for r in alert_rows)
 
         # ETCカード（fixed_months > 0）: 当該カードの請求期間に合わせた billing_ym で集計
         for card in cards_all:
