@@ -12,12 +12,12 @@
 {% if credit_limit > 0 and card_used_this_month >= credit_limit %}
 <div class="alert-over">
   ⚠️ クレカ使いすぎ！　{{ card_used_this_month | fmt_money }} / 上限 {{ credit_limit | fmt_money }}
-  <div style="font-size:0.8em; opacity:0.85; margin-top:2px;">※ 各カードの締め日基準</div>
+  <div style="font-size:0.8em; opacity:0.85; margin-top:2px;">変動費 {{ card_variable_alert | fmt_money }} + 固定費 {{ card_fixed_alert | fmt_money }}{% if card_etc_alert > 0 %} + ETC {{ card_etc_alert | fmt_money }}{% endif %}</div>
 </div>
 {% elif credit_limit > 0 and card_used_this_month >= credit_limit * 0.8 %}
 <div class="alert-warn">
   💳 クレカ上限の80%に達しました　{{ card_used_this_month | fmt_money }} / {{ credit_limit | fmt_money }}
-  <div style="font-size:0.8em; opacity:0.85; margin-top:2px;">※ 各カードの締め日基準</div>
+  <div style="font-size:0.8em; opacity:0.85; margin-top:2px;">変動費 {{ card_variable_alert | fmt_money }} + 固定費 {{ card_fixed_alert | fmt_money }}{% if card_etc_alert > 0 %} + ETC {{ card_etc_alert | fmt_money }}{% endif %}</div>
 </div>
 {% endif %}
 

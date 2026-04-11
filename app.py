@@ -459,18 +459,18 @@ def index():
                  AND (c.fixed_months IS NULL OR c.fixed_months = 0)''',
             (uid,)
         ).fetchall()
-        card_used_this_month = 0
+        card_variable_alert = 0
         today_ym_str = today_date.strftime('%Y-%m')
         for r in alert_rows:
             cid = r['card_id']
             exp_date = date.fromisoformat(r['expense_date'])
             if cid in card_period_starts:
                 if exp_date >= card_period_starts[cid]:
-                    card_used_this_month += r['amount']
+                    card_variable_alert += r['amount']
             else:
                 # カード未選択の場合は今月のexpense_dateで判定
                 if exp_date.strftime('%Y-%m') == today_ym_str:
-                    card_used_this_month += r['amount']
+                    card_variable_alert += r['amount']
 
         # 固定費のクレカ払い分も加算（毎月発生するため当月有効分を全額計上）
         fixed_card_rows = conn.execute(
@@ -493,8 +493,7 @@ def index():
                  )''',
             (uid, today_ym_str, uid, today_ym_str)
         ).fetchall()
-        for r in fixed_card_rows:
-            card_used_this_month += r['amount']
+        card_fixed_alert = sum(r['amount'] for r in fixed_card_rows)
 
         # ETCカード（fixed_months > 0）: 来月請求分をアラートに含める
         next_month_ym = add_months(today_date, 1).strftime('%Y-%m')
@@ -508,8 +507,8 @@ def index():
                  AND e.billing_ym = ?''',
             (uid, next_month_ym)
         ).fetchall()
-        for r in etc_alert_rows:
-            card_used_this_month += r['amount']
+        card_etc_alert = sum(r['amount'] for r in etc_alert_rows)
+        card_used_this_month = card_variable_alert + card_fixed_alert + card_etc_alert
 
 
         extra_incomes = conn.execute(
@@ -539,6 +538,9 @@ def index():
         card_transfer=card_transfer, transfer_total=transfer_total,
         credit_limit=credit_limit,
         card_used_this_month=card_used_this_month,
+        card_variable_alert=card_variable_alert,
+        card_fixed_alert=card_fixed_alert,
+        card_etc_alert=card_etc_alert,
         extra_incomes=extra_incomes, extra_total=extra_total,
         carryover=carryover, prev_month_ended=prev_month_ended,
         balance=balance, prev_ym=prev_ym, next_ym=next_ym,
