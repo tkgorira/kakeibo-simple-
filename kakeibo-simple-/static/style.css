@@ -1,0 +1,333 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+  background: #f0f2f5;
+  color: #222;
+  max-width: 480px;
+  margin: 0 auto;
+  padding-bottom: 72px;
+  font-size: 15px;
+}
+
+/* ── Header ── */
+header {
+  background: #1a2a3a;
+  color: white;
+  padding: 13px 16px;
+  /* iOS PWA: ステータスバー分の余白 */
+  padding-top: max(13px, env(safe-area-inset-top));
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+header h1 { font-size: 1rem; letter-spacing: 0.03em; }
+
+/* ── Bottom nav ── */
+nav.bottom {
+  position: fixed;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 480px;
+  background: white;
+  border-top: 1px solid #e0e0e0;
+  display: flex;
+  z-index: 100;
+}
+nav.bottom a {
+  flex: 1;
+  text-align: center;
+  padding: 8px 0 6px;
+  text-decoration: none;
+  color: #999;
+  font-size: 0.68rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+nav.bottom a.active { color: #2980b9; }
+nav.bottom a .icon { font-size: 1.4rem; line-height: 1; }
+
+/* ── Alerts ── */
+.alert-over, .alert-warn {
+  margin: 10px 12px 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+.alert-over {
+  background: #fde8e8;
+  border-left: 4px solid #e74c3c;
+  color: #c0392b;
+}
+.alert-warn {
+  background: #fef6e4;
+  border-left: 4px solid #e67e22;
+  color: #b7770d;
+}
+
+/* ── Flash messages ── */
+.flash {
+  margin: 10px 12px 0;
+  padding: 10px 14px;
+  background: #d4edda;
+  border-left: 4px solid #27ae60;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  color: #155724;
+}
+
+/* ── Month nav ── */
+.month-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 8px;
+  background: white;
+  border-bottom: 1px solid #eee;
+}
+.month-nav a {
+  color: #2980b9;
+  text-decoration: none;
+  padding: 6px 14px;
+  font-size: 1.3rem;
+  border-radius: 8px;
+}
+.month-nav a:active { background: #eaf4fd; }
+.month-nav .month-label { font-size: 1.05rem; font-weight: 700; }
+
+/* ── Balance card ── */
+.balance-card {
+  margin: 12px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #1a2a3a 0%, #2980b9 100%);
+  color: white;
+  padding: 24px 20px 20px;
+  text-align: center;
+  box-shadow: 0 4px 16px rgba(41,128,185,0.25);
+}
+.balance-card .label { font-size: 0.78rem; opacity: 0.8; letter-spacing: 0.08em; }
+.balance-card .amount {
+  font-size: 2.6rem;
+  font-weight: 800;
+  margin: 6px 0 2px;
+  letter-spacing: -0.02em;
+}
+.balance-card .amount.positive { color: #2efc98; }
+.balance-card .amount.negative { color: #ff6b6b; }
+.balance-card .sub { font-size: 0.75rem; opacity: 0.7; }
+
+/* ── Breakdown grid ── */
+.breakdown {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
+  gap: 8px;
+  margin: 0 12px 4px;
+}
+.bd-item {
+  background: white;
+  border-radius: 12px;
+  padding: 12px 8px;
+  text-align: center;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
+.bd-item .lbl { font-size: 0.68rem; color: #888; margin-bottom: 5px; }
+.bd-item .val { font-size: 0.88rem; font-weight: 700; }
+.bd-item .val.income { color: #27ae60; }
+.bd-item .val.expense { color: #e74c3c; }
+
+/* ── Section title ── */
+.section-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #888;
+  padding: 12px 16px 4px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* ── Cards (white boxes) ── */
+.card {
+  background: white;
+  border-radius: 14px;
+  padding: 16px;
+  margin: 0 12px 12px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+}
+
+/* ── Expense list ── */
+.exp-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 11px 14px;
+  background: white;
+  border-radius: 11px;
+  margin: 0 12px 8px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+.exp-item .left .cat {
+  font-size: 0.7rem;
+  color: #2980b9;
+  font-weight: 600;
+}
+.exp-item .left .note { font-size: 0.88rem; color: #333; margin-top: 1px; }
+.exp-item .left .meta { font-size: 0.7rem; color: #bbb; margin-top: 2px; }
+.exp-item .right { text-align: right; }
+.exp-item .right .amt { font-size: 1rem; font-weight: 700; color: #e74c3c; }
+.exp-item .right .pay { font-size: 0.68rem; color: #bbb; margin-top: 2px; }
+
+/* ── Form elements ── */
+.form-group { margin-bottom: 12px; }
+.form-group label {
+  display: block;
+  font-size: 0.78rem;
+  color: #666;
+  margin-bottom: 5px;
+  font-weight: 600;
+}
+input[type=text], input[type=number], input[type=date], select, textarea {
+  width: 100%;
+  padding: 11px 12px;
+  border: 1.5px solid #e0e0e0;
+  border-radius: 9px;
+  font-size: 1rem;
+  background: #fafafa;
+  color: #222;
+  appearance: none;
+  -webkit-appearance: none;
+}
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: #2980b9;
+  background: white;
+}
+
+.payment-tabs {
+  display: flex;
+  border: 1.5px solid #e0e0e0;
+  border-radius: 9px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+.payment-tabs input[type=radio] { display: none; }
+.payment-tabs label {
+  flex: 1;
+  text-align: center;
+  padding: 10px 8px;
+  cursor: pointer;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #888;
+  background: #fafafa;
+  border: none;
+  margin: 0;
+}
+.payment-tabs input[type=radio]:checked + label {
+  background: #2980b9;
+  color: white;
+}
+
+#card-selector { display: none; }
+#card-selector.show { display: block; }
+
+/* ── Buttons ── */
+.btn {
+  display: inline-block;
+  padding: 11px 18px;
+  border: none;
+  border-radius: 9px;
+  font-size: 0.92rem;
+  font-weight: 700;
+  cursor: pointer;
+  text-align: center;
+  text-decoration: none;
+}
+.btn-primary { background: #2980b9; color: white; }
+.btn-success { background: #27ae60; color: white; }
+.btn-danger  { background: #e74c3c; color: white; font-size: 0.75rem; padding: 6px 11px; border-radius: 7px; }
+.btn-block   { display: block; width: 100%; }
+.btn:active  { opacity: 0.8; }
+
+/* ── List items (settings) ── */
+.list-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid #f2f2f2;
+}
+.list-item:last-child { border-bottom: none; }
+.list-item .name { font-size: 0.9rem; }
+.list-item .name small { display: block; font-size: 0.72rem; color: #aaa; margin-top: 1px; }
+.list-item .right-group { display: flex; align-items: center; gap: 10px; }
+.list-item .amt { font-size: 0.9rem; font-weight: 700; color: #e74c3c; }
+
+.empty {
+  text-align: center;
+  color: #bbb;
+  padding: 28px 16px;
+  font-size: 0.85rem;
+}
+
+.row2 { display: flex; gap: 8px; }
+.row2 > * { flex: 1; }
+
+/* ── Fixed expenses in index ── */
+.fixed-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+  font-size: 0.85rem;
+  border-bottom: 1px solid #f5f5f5;
+  color: #555;
+}
+.fixed-row:last-child { border-bottom: none; }
+.fixed-row .amt { color: #e74c3c; font-weight: 600; }
+
+/* タイプバッジ */
+.type-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  vertical-align: middle;
+}
+.type-badge.fixed    { background: #e8f4fd; color: #2980b9; }
+.type-badge.variable { background: #fef9e7; color: #e67e22; }
+
+/* 変更予定バッジ */
+.pending-badge {
+  font-size: 0.72rem;
+  color: #e67e22;
+  margin-top: 4px;
+}
+
+/* アウトラインボタン */
+.btn-outline {
+  background: white;
+  color: #888;
+  border: 1.5px solid #ddd;
+}
+.btn-warning { background: #e67e22; color: white; }
+
+/* 編集サマリー */
+details { margin-top: 4px; }
+.edit-summary {
+  font-size: 0.8rem;
+  color: #2980b9;
+  cursor: pointer;
+  padding: 4px 0;
+  list-style: none;
+}
+.edit-summary::-webkit-details-marker { display: none; }
+.edit-summary::before { content: '▶ '; font-size: 0.65rem; }
+details[open] .edit-summary::before { content: '▼ '; }
