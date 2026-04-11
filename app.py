@@ -456,7 +456,7 @@ def index():
                WHERE e.payment_type = 'card'
                  AND e.user_id = ?
                  AND (c.fixed_months IS NULL OR c.fixed_months = 0)
-                 AND strftime('%Y-%m', e.expense_date) = ?''',
+                 AND LEFT(e.expense_date, 7) = ?''',
             (uid, today_ym_str)
         ).fetchall()
         card_used_this_month = sum(r['amount'] for r in alert_rows)
