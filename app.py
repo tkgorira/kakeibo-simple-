@@ -446,31 +446,20 @@ def index():
                     'display': adj if adj is not None else calc,
                 })
         transfer_total = sum(c['display'] for c in card_transfer) + withdrawal_total
-        card_period_starts = {
-            card['id']: get_card_period_start(today_date, card['closing_day'])
-            for card in cards_all if not card['fixed_months']
-        }
+        # アラート用変動費: expense_date が今月のカード払いを集計
+        # （締め日ベースの請求期間ではなく、支出した月で判定することで締め日リセットを防ぐ）
+        today_ym_str = today_date.strftime('%Y-%m')
         alert_rows = conn.execute(
-            '''SELECT e.amount, e.card_id, e.expense_date, c.fixed_months as card_fixed_months
+            '''SELECT e.amount
                FROM variable_expenses e
                LEFT JOIN credit_cards c ON e.card_id = c.id
                WHERE e.payment_type = 'card'
                  AND e.user_id = ?
-                 AND (c.fixed_months IS NULL OR c.fixed_months = 0)''',
-            (uid,)
+                 AND (c.fixed_months IS NULL OR c.fixed_months = 0)
+                 AND strftime('%Y-%m', e.expense_date) = ?''',
+            (uid, today_ym_str)
         ).fetchall()
-        card_variable_alert = 0
-        today_ym_str = today_date.strftime('%Y-%m')
-        for r in alert_rows:
-            cid = r['card_id']
-            exp_date = date.fromisoformat(r['expense_date'])
-            if cid in card_period_starts:
-                if exp_date >= card_period_starts[cid]:
-                    card_variable_alert += r['amount']
-            else:
-                # カード未選択の場合は今月のexpense_dateで判定
-                if exp_date.strftime('%Y-%m') == today_ym_str:
-                    card_variable_alert += r['amount']
+        card_variable_alert = sum(r['amount'] for r in alert_rows)
 
         # 固定費のクレカ払い分も加算（毎月発生するため当月有効分を全額計上）
         fixed_card_rows = conn.execute(
