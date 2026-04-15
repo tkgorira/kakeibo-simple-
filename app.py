@@ -449,6 +449,7 @@ def index():
         today_ym_str = today_date.strftime('%Y-%m')
         # アラート用: カードごとの締め日ベースで当期 billing_ym を計算して集計
         card_used_this_month = 0
+        fixed_today = get_fixed_for_ym(conn, today_ym_str, uid)
         for card in cards_all:
             if card['fixed_months']:
                 # ETCカード: fixed_months 後の billing_ym
@@ -459,6 +460,7 @@ def index():
                     current_billing_ym = add_months(today_date, 1).strftime('%Y-%m')
                 else:
                     current_billing_ym = add_months(today_date, 2).strftime('%Y-%m')
+            # 変動費: 当期 billing_ym に合致するものだけ（締め日でリセット）
             rows = conn.execute(
                 '''SELECT e.amount FROM variable_expenses e
                    WHERE e.payment_type = 'card'
@@ -468,6 +470,10 @@ def index():
                 (uid, card['id'], current_billing_ym)
             ).fetchall()
             card_used_this_month += sum(r['amount'] for r in rows)
+            # 固定費: 毎月必ず発生するので当期に常にカウント
+            card_used_this_month += sum(
+                f['amount'] for f in fixed_today if f['card_id'] == card['id']
+            )
 
         # card_id 未設定のカード払いは expense_date の月で集計
         rows_no_card = conn.execute(
@@ -479,10 +485,6 @@ def index():
             (uid, today_ym_str)
         ).fetchall()
         card_used_this_month += sum(r['amount'] for r in rows_no_card)
-
-        # 固定費のクレカ払いも今月分をアラートに追加
-        fixed_today = get_fixed_for_ym(conn, today_ym_str, uid)
-        card_used_this_month += sum(f['amount'] for f in fixed_today if f['card_id'])
 
 
         extra_incomes = conn.execute(
