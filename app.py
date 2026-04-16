@@ -454,9 +454,15 @@ def index():
         fixed_next = get_fixed_for_ym(conn, next_ym_str, uid)
         for card in cards_all:
             if card['fixed_months']:
-                # ETCカード: fixed_months 後の billing_ym
-                current_billing_ym = add_months(today_date, card['fixed_months']).strftime('%Y-%m')
-                # 今月の固定費 → fixed_months ヶ月後請求 = current_billing_ym
+                # ETCカード: 複数月分が同時に未払いになるため billing_ym >= 今月 で全未払い分を集計
+                rows = conn.execute(
+                    '''SELECT e.amount FROM variable_expenses e
+                       WHERE e.payment_type = 'card'
+                         AND e.user_id = ?
+                         AND e.card_id = ?
+                         AND e.billing_ym >= ?''',
+                    (uid, card['id'], today_ym_str)
+                ).fetchall()
                 fixed_for_card = fixed_today
             else:
                 # 通常カード: 締め日を過ぎているかで当期 billing_ym を決定
@@ -468,15 +474,14 @@ def index():
                     current_billing_ym = add_months(today_date, 2).strftime('%Y-%m')
                     # 来月の固定費 → 再来月請求 = current_billing_ym
                     fixed_for_card = fixed_next
-            # 変動費: 当期 billing_ym に合致するものだけ（締め日でリセット）
-            rows = conn.execute(
-                '''SELECT e.amount FROM variable_expenses e
-                   WHERE e.payment_type = 'card'
-                     AND e.user_id = ?
-                     AND e.card_id = ?
-                     AND e.billing_ym = ?''',
-                (uid, card['id'], current_billing_ym)
-            ).fetchall()
+                rows = conn.execute(
+                    '''SELECT e.amount FROM variable_expenses e
+                       WHERE e.payment_type = 'card'
+                         AND e.user_id = ?
+                         AND e.card_id = ?
+                         AND e.billing_ym = ?''',
+                    (uid, card['id'], current_billing_ym)
+                ).fetchall()
             card_used_this_month += sum(r['amount'] for r in rows)
             # 固定費: 当期 billing_ym に対応する月の固定費をカウント
             card_used_this_month += sum(
@@ -828,8 +833,14 @@ def debug_alert():
         fixed_next = get_fixed_for_ym(conn, next_ym_str, uid)
         for card in cards_all:
             if card['fixed_months']:
-                current_billing_ym = add_months(today_date, card['fixed_months']).strftime('%Y-%m')
+                # ETCカード: 全未払い分（billing_ym >= 今月）を集計
+                rows = conn.execute(
+                    '''SELECT id, expense_date, amount, billing_ym FROM variable_expenses
+                       WHERE payment_type='card' AND user_id=? AND card_id=? AND billing_ym>=?''',
+                    (uid, card['id'], today_ym_str)
+                ).fetchall()
                 fixed_for_card = fixed_today
+                billing_label = f'>={today_ym_str} (全未払い)'
             else:
                 if today_date.day <= card['closing_day']:
                     current_billing_ym = add_months(today_date, 1).strftime('%Y-%m')
@@ -837,16 +848,17 @@ def debug_alert():
                 else:
                     current_billing_ym = add_months(today_date, 2).strftime('%Y-%m')
                     fixed_for_card = fixed_next
-            rows = conn.execute(
-                '''SELECT id, expense_date, amount, billing_ym FROM variable_expenses
-                   WHERE payment_type='card' AND user_id=? AND card_id=? AND billing_ym=?''',
-                (uid, card['id'], current_billing_ym)
-            ).fetchall()
+                rows = conn.execute(
+                    '''SELECT id, expense_date, amount, billing_ym FROM variable_expenses
+                       WHERE payment_type='card' AND user_id=? AND card_id=? AND billing_ym=?''',
+                    (uid, card['id'], current_billing_ym)
+                ).fetchall()
+                billing_label = current_billing_ym
             var_total = sum(r['amount'] for r in rows)
             fix_total = sum(f['amount'] for f in fixed_for_card if f['card_id'] == card['id'])
             fixed_label = next_ym_str if fixed_for_card is fixed_next else today_ym_str
             lines.append(f"[Card {card['id']}] {card['name']}  closing_day={card['closing_day']}  fixed_months={card['fixed_months']}")
-            lines.append(f"  current_billing_ym={current_billing_ym}  fixed_base_ym={fixed_label}")
+            lines.append(f"  billing_filter={billing_label}  fixed_base_ym={fixed_label}")
             lines.append(f"  variable_total={var_total}  fixed_total={fix_total}")
             for r in rows:
                 lines.append(f"    expense id={r['id']} date={r['expense_date']} amount={r['amount']} billing_ym={r['billing_ym']}")
