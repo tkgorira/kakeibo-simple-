@@ -449,17 +449,25 @@ def index():
         today_ym_str = today_date.strftime('%Y-%m')
         # アラート用: カードごとの締め日ベースで当期 billing_ym を計算して集計
         card_used_this_month = 0
+        next_ym_str = add_months(today_date, 1).strftime('%Y-%m')
         fixed_today = get_fixed_for_ym(conn, today_ym_str, uid)
+        fixed_next = get_fixed_for_ym(conn, next_ym_str, uid)
         for card in cards_all:
             if card['fixed_months']:
                 # ETCカード: fixed_months 後の billing_ym
                 current_billing_ym = add_months(today_date, card['fixed_months']).strftime('%Y-%m')
+                # 今月の固定費 → fixed_months ヶ月後請求 = current_billing_ym
+                fixed_for_card = fixed_today
             else:
                 # 通常カード: 締め日を過ぎているかで当期 billing_ym を決定
                 if today_date.day <= card['closing_day']:
                     current_billing_ym = add_months(today_date, 1).strftime('%Y-%m')
+                    # 今月の固定費 → 来月請求 = current_billing_ym
+                    fixed_for_card = fixed_today
                 else:
                     current_billing_ym = add_months(today_date, 2).strftime('%Y-%m')
+                    # 来月の固定費 → 再来月請求 = current_billing_ym
+                    fixed_for_card = fixed_next
             # 変動費: 当期 billing_ym に合致するものだけ（締め日でリセット）
             rows = conn.execute(
                 '''SELECT e.amount FROM variable_expenses e
@@ -470,9 +478,9 @@ def index():
                 (uid, card['id'], current_billing_ym)
             ).fetchall()
             card_used_this_month += sum(r['amount'] for r in rows)
-            # 固定費: 毎月必ず発生するので当期に常にカウント
+            # 固定費: 当期 billing_ym に対応する月の固定費をカウント
             card_used_this_month += sum(
-                f['amount'] for f in fixed_today if f['card_id'] == card['id']
+                f['amount'] for f in fixed_for_card if f['card_id'] == card['id']
             )
 
         # card_id 未設定のカード払いは expense_date の月で集計
@@ -815,24 +823,30 @@ def debug_alert():
     lines = [f'today={today_date}  today_ym={today_ym_str}', '']
     with get_db() as conn:
         cards_all = conn.execute('SELECT * FROM credit_cards WHERE user_id=?', (uid,)).fetchall()
+        next_ym_str = add_months(today_date, 1).strftime('%Y-%m')
         fixed_today = get_fixed_for_ym(conn, today_ym_str, uid)
+        fixed_next = get_fixed_for_ym(conn, next_ym_str, uid)
         for card in cards_all:
             if card['fixed_months']:
                 current_billing_ym = add_months(today_date, card['fixed_months']).strftime('%Y-%m')
+                fixed_for_card = fixed_today
             else:
                 if today_date.day <= card['closing_day']:
                     current_billing_ym = add_months(today_date, 1).strftime('%Y-%m')
+                    fixed_for_card = fixed_today
                 else:
                     current_billing_ym = add_months(today_date, 2).strftime('%Y-%m')
+                    fixed_for_card = fixed_next
             rows = conn.execute(
                 '''SELECT id, expense_date, amount, billing_ym FROM variable_expenses
                    WHERE payment_type='card' AND user_id=? AND card_id=? AND billing_ym=?''',
                 (uid, card['id'], current_billing_ym)
             ).fetchall()
             var_total = sum(r['amount'] for r in rows)
-            fix_total = sum(f['amount'] for f in fixed_today if f['card_id'] == card['id'])
+            fix_total = sum(f['amount'] for f in fixed_for_card if f['card_id'] == card['id'])
+            fixed_label = next_ym_str if fixed_for_card is fixed_next else today_ym_str
             lines.append(f"[Card {card['id']}] {card['name']}  closing_day={card['closing_day']}  fixed_months={card['fixed_months']}")
-            lines.append(f"  current_billing_ym={current_billing_ym}")
+            lines.append(f"  current_billing_ym={current_billing_ym}  fixed_base_ym={fixed_label}")
             lines.append(f"  variable_total={var_total}  fixed_total={fix_total}")
             for r in rows:
                 lines.append(f"    expense id={r['id']} date={r['expense_date']} amount={r['amount']} billing_ym={r['billing_ym']}")
