@@ -807,6 +807,49 @@ def income():
     )
 
 
+@app.route('/debug/alert')
+def debug_alert():
+    uid = SINGLE_USER_ID
+    today_date = date.today()
+    today_ym_str = today_date.strftime('%Y-%m')
+    lines = [f'today={today_date}  today_ym={today_ym_str}', '']
+    with get_db() as conn:
+        cards_all = conn.execute('SELECT * FROM credit_cards WHERE user_id=?', (uid,)).fetchall()
+        fixed_today = get_fixed_for_ym(conn, today_ym_str, uid)
+        for card in cards_all:
+            if card['fixed_months']:
+                current_billing_ym = add_months(today_date, card['fixed_months']).strftime('%Y-%m')
+            else:
+                if today_date.day <= card['closing_day']:
+                    current_billing_ym = add_months(today_date, 1).strftime('%Y-%m')
+                else:
+                    current_billing_ym = add_months(today_date, 2).strftime('%Y-%m')
+            rows = conn.execute(
+                '''SELECT id, expense_date, amount, billing_ym FROM variable_expenses
+                   WHERE payment_type='card' AND user_id=? AND card_id=? AND billing_ym=?''',
+                (uid, card['id'], current_billing_ym)
+            ).fetchall()
+            var_total = sum(r['amount'] for r in rows)
+            fix_total = sum(f['amount'] for f in fixed_today if f['card_id'] == card['id'])
+            lines.append(f"[Card {card['id']}] {card['name']}  closing_day={card['closing_day']}  fixed_months={card['fixed_months']}")
+            lines.append(f"  current_billing_ym={current_billing_ym}")
+            lines.append(f"  variable_total={var_total}  fixed_total={fix_total}")
+            for r in rows:
+                lines.append(f"    expense id={r['id']} date={r['expense_date']} amount={r['amount']} billing_ym={r['billing_ym']}")
+            lines.append('')
+        # card_id NULL expenses
+        rows_no_card = conn.execute(
+            '''SELECT id, expense_date, amount FROM variable_expenses
+               WHERE payment_type='card' AND user_id=? AND card_id IS NULL
+               AND LEFT(expense_date,7)=?''',
+            (uid, today_ym_str)
+        ).fetchall()
+        lines.append(f'[card_id=NULL] total={sum(r["amount"] for r in rows_no_card)}')
+        for r in rows_no_card:
+            lines.append(f"  id={r['id']} date={r['expense_date']} amount={r['amount']}")
+    return '<pre>' + '\n'.join(lines) + '</pre>'
+
+
 # gunicorn/Render でも init_db() が実行されるようモジュールレベルで呼ぶ
 init_db()
 
