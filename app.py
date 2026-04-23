@@ -5,6 +5,12 @@ import contextlib
 from datetime import date
 from calendar import monthrange
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 SINGLE_USER_ID = 1
 
 app = Flask(__name__)
@@ -494,7 +500,7 @@ def index():
                WHERE e.payment_type = 'card'
                  AND e.user_id = ?
                  AND e.card_id IS NULL
-                 AND LEFT(e.expense_date, 7) = ?''',
+                 AND SUBSTR(e.expense_date, 1, 7) = ?''',
             (uid, today_ym_str)
         ).fetchall()
         card_used_this_month += sum(r['amount'] for r in rows_no_card)
@@ -867,7 +873,7 @@ def debug_alert():
         rows_no_card = conn.execute(
             '''SELECT id, expense_date, amount FROM variable_expenses
                WHERE payment_type='card' AND user_id=? AND card_id IS NULL
-               AND LEFT(expense_date,7)=?''',
+               AND SUBSTR(expense_date,1,7)=?''',
             (uid, today_ym_str)
         ).fetchall()
         lines.append(f'[card_id=NULL] total={sum(r["amount"] for r in rows_no_card)}')
